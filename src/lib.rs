@@ -1331,6 +1331,180 @@ pub struct MediaBox {
     pub ury: f64
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct BoundingBox {
+    pub top_left: Point,
+    pub top_right: Point,
+    pub bottom_left: Point,
+    pub bottom_right: Point,
+}
+
+#[derive(Debug, Clone)]
+pub struct TextSpan {
+    pub text: String,
+    pub bbox: BoundingBox,
+    pub font_size: f64,
+    pub page_num: u32,
+}
+
+impl TextSpan {
+    // Standard monospace character width in PDF points.
+    // This maps PDF coordinates to a character grid for terminal output.
+    // Adjust this constant if the output spacing doesn't match your terminal.
+    pub const MONOSPACE_CHAR_WIDTH_POINTS: f64 = 4.0;
+
+    /// Convert a PDF x-coordinate (in points) to a character grid column number.
+    /// The grid starts at column 0 for x=0.
+    pub fn x_to_col(x: f64) -> usize {
+        (x / Self::MONOSPACE_CHAR_WIDTH_POINTS).round() as usize
+    }
+
+    /// Get the starting column position for this span in the character grid.
+    pub fn start_col(&self) -> usize {
+        Self::x_to_col(self.bbox.bottom_left.x)
+    }
+
+    /// Get the ending column position for this span in the character grid.
+    pub fn end_col(&self) -> usize {
+        Self::x_to_col(self.bbox.bottom_right.x)
+    }
+
+    /// Get the width of this span in character grid cells.
+    /// Returns at least the length of the text to avoid truncation.
+    pub fn grid_width(&self) -> usize {
+        let bbox_width = self.end_col().saturating_sub(self.start_col());
+        bbox_width.max(self.text.chars().count())
+    }
+
+    /// Check if this span belongs to a right-aligned column.
+    /// Returns true if the span's right edge is close to any of the detected right-aligned positions.
+    pub fn is_right_aligned(&self, right_aligned_positions: &[f64], threshold: f64) -> bool {
+        let right_x = self.bbox.bottom_right.x;
+        right_aligned_positions.iter().any(|&pos_x| (right_x - pos_x).abs() < threshold)
+    }
+}
+
+pub type TextLine = Vec<TextSpan>;
+pub type TextPage = Vec<TextLine>;
+
+/// Detect right-aligned columns across all lines by finding clusters of spans
+/// with similar right-edge coordinates but varying left-edge coordinates.
+/// Returns a vector of x-coordinates (in PDF points) that represent right-aligned column positions.
+pub fn detect_right_aligned_columns(lines: &TextPage) -> Vec<f64> {
+    use std::collections::HashMap;
+
+    // Threshold for clustering right edges (in PDF points)
+    const CLUSTER_THRESHOLD: f64 = 8.0;
+    // Minimum number of spans needed to consider a column as right-aligned
+    const MIN_SPANS_FOR_COLUMN: usize = 3;
+    // Minimum variation in left edges to consider a column as right-aligned (not left-aligned)
+    // Must be large enough to exclude justified text columns but catch true right-aligned data
+    const MIN_LEFT_VARIATION: f64 = 50.0;
+    // Minimum x-position to consider as a table column (not left-margin content)
+    const MIN_COLUMN_POSITION: f64 = 200.0;
+
+    #[derive(Clone)]
+    struct SpanEdges {
+        left_x: f64,
+        right_x: f64,
+    }
+
+    // Collect all span edges
+    let mut all_edges: Vec<SpanEdges> = Vec::new();
+    for line in lines {
+        for span in line {
+            all_edges.push(SpanEdges {
+                left_x: span.bbox.bottom_left.x,
+                right_x: span.bbox.bottom_right.x,
+            });
+        }
+    }
+
+    if all_edges.is_empty() {
+        return Vec::new();
+    }
+
+    // Cluster the right edges using a simple agglomerative approach
+    let mut clusters: HashMap<usize, Vec<SpanEdges>> = HashMap::new();
+    let mut cluster_id = 0;
+
+    for edges in all_edges {
+        // Find if this edge belongs to an existing cluster by checking distance to cluster center
+        let mut found_cluster = None;
+        let mut min_distance = f64::MAX;
+
+        for (id, cluster) in clusters.iter() {
+            // Calculate cluster center for right edges
+            let center = cluster.iter().map(|e| e.right_x).sum::<f64>() / cluster.len() as f64;
+            let distance = (edges.right_x - center).abs();
+
+            if distance < CLUSTER_THRESHOLD && distance < min_distance {
+                found_cluster = Some(*id);
+                min_distance = distance;
+            }
+        }
+
+        if let Some(id) = found_cluster {
+            clusters.get_mut(&id).unwrap().push(edges);
+        } else {
+            // Create new cluster
+            clusters.insert(cluster_id, vec![edges]);
+            cluster_id += 1;
+        }
+    }
+
+    // Find clusters with enough spans AND varying left edges (indicating right-alignment)
+    let mut right_aligned_positions = Vec::new();
+    for cluster in clusters.values() {
+        if cluster.len() >= MIN_SPANS_FOR_COLUMN {
+            // Calculate variation in left edges
+            let left_edges: Vec<f64> = cluster.iter().map(|e| e.left_x).collect();
+            let min_left = left_edges.iter().cloned().fold(f64::INFINITY, f64::min);
+            let max_left = left_edges.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let left_variation = max_left - min_left;
+
+            // Calculate variation in right edges
+            let right_edges: Vec<f64> = cluster.iter().map(|e| e.right_x).collect();
+            let min_right = right_edges.iter().cloned().fold(f64::INFINITY, f64::min);
+            let max_right = right_edges.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let right_variation = max_right - min_right;
+
+            let avg_right_x = cluster.iter().map(|e| e.right_x).sum::<f64>() / cluster.len() as f64;
+
+            // Only consider it right-aligned if:
+            // 1. Left edges vary (not perfectly left-aligned or justified)
+            // 2. Right edges are consistent (not left-aligned paragraphs)
+            // 3. Position is far enough right to be a table column (not left-margin content)
+            // If both left and right are consistent, it's justified text (treat as left-aligned)
+            const MAX_RIGHT_VARIATION: f64 = 3.7;
+            // Columns far to the right are likely table data (use lower threshold)
+            const FAR_RIGHT_POSITION: f64 = 450.0;
+            const MIN_LEFT_VARIATION_FAR_RIGHT: f64 = 5.0;
+
+            // Use position-based threshold: columns far to the right need less left variation
+            let left_variation_threshold = if avg_right_x >= FAR_RIGHT_POSITION {
+                MIN_LEFT_VARIATION_FAR_RIGHT
+            } else {
+                MIN_LEFT_VARIATION
+            };
+
+            if left_variation >= left_variation_threshold
+                && right_variation < MAX_RIGHT_VARIATION
+                && avg_right_x >= MIN_COLUMN_POSITION {
+                right_aligned_positions.push(avg_right_x);
+            }
+        }
+    }
+
+    right_aligned_positions
+}
+
 fn apply_state(doc: &Document, gs: &mut GraphicsState, state: &Dictionary) {
     for (k, v) in state.iter() {
         let k : &[u8] = k.as_ref();
@@ -2196,6 +2370,265 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
     }
 }
 
+pub struct BoundingBoxOutput {
+    flip_ctm: Transform,
+    buf_start_x: f64,
+    buf_start_y: f64,
+    buf_end_x: f64,
+    last_x: f64,
+    last_y: f64,
+    buf_font_size: f64,
+    buf_ctm: Transform,
+    buf: String,
+    first_char: bool,
+    current_page: u32,
+    spans: Vec<TextSpan>,
+}
+
+impl BoundingBoxOutput {
+    // Threshold for breaking to a new line (allows superscripts/subscripts to group with baseline text)
+    const LINE_BREAK_THRESHOLD_POINTS: f64 = 8.0;
+
+    // Threshold for inserting blank lines when Y-gap is larger than normal line spacing
+    const BLANK_LINE_THRESHOLD_POINTS: f64 = 24.0;
+
+    // Assumed vertical spacing per line in PDF points
+    const POINTS_PER_LINE: f64 = 10.0;
+
+    // Character spacing thresholds (as ratio of font size)
+    // Gap > this ratio will create a new span (flush buffer)
+    const CHAR_FLUSH_THRESHOLD_RATIO: f64 = 1.2;
+    // Gap > this ratio will insert a space within the current span
+    const CHAR_SPACE_THRESHOLD_RATIO: f64 = 0.15;
+
+    pub fn new() -> BoundingBoxOutput {
+        BoundingBoxOutput {
+            flip_ctm: Transform2D::identity(),
+            buf_start_x: 0.,
+            buf_start_y: 0.,
+            buf_end_x: 0.,
+            last_x: 0.,
+            last_y: 0.,
+            buf_font_size: 0.,
+            buf_ctm: Transform2D::identity(),
+            buf: String::new(),
+            first_char: false,
+            current_page: 0,
+            spans: Vec::new(),
+        }
+    }
+
+    pub fn into_spans(self) -> Vec<TextSpan> {
+        self.spans
+    }
+
+    pub fn into_lines(mut self) -> Vec<Vec<TextSpan>> {
+        if self.spans.is_empty() {
+            return Vec::new();
+        }
+
+        // Sort spans by page number first, then by Y coordinate (top to bottom)
+        // This ensures pages don't get mixed together
+        self.spans.sort_by(|a, b| {
+            match a.page_num.cmp(&b.page_num) {
+                std::cmp::Ordering::Equal => {
+                    a.bbox.top_left.y.partial_cmp(&b.bbox.top_left.y).unwrap_or(std::cmp::Ordering::Equal)
+                }
+                other => other,
+            }
+        });
+
+        let mut lines: Vec<Vec<TextSpan>> = Vec::new();
+        let mut current_line: Vec<TextSpan> = Vec::new();
+        let mut last_y: Option<f64> = None;
+        let mut last_page: Option<u32> = None;
+
+        for span in self.spans {
+            // Use baseline (bottom Y) for line grouping so superscripts group with their baseline text
+            let span_y = span.bbox.bottom_left.y;
+            let span_page = span.page_num;
+
+            // Check if we've moved to a new page
+            if let Some(prev_page) = last_page {
+                if span_page != prev_page {
+                    // Flush current line
+                    if !current_line.is_empty() {
+                        current_line.sort_by(|a, b| {
+                            a.bbox.bottom_left.x.partial_cmp(&b.bbox.bottom_left.x).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        lines.push(current_line);
+                        current_line = Vec::new();
+                    }
+                    // Insert a blank line as page separator
+                    lines.push(Vec::new());
+                    last_y = None;
+                }
+            }
+
+            if let Some(prev_y) = last_y {
+                let y_gap = (span_y - prev_y).abs();
+                // Use absolute threshold - with baseline grouping, superscripts have ~0 gap
+                // Footer rows and table rows have ~6-8pt gaps
+                let line_break_threshold = 5.0;
+
+                if y_gap > line_break_threshold {
+                    // Start a new line
+                    if !current_line.is_empty() {
+                        // Sort spans in the line by X coordinate (left to right)
+                        current_line.sort_by(|a, b| {
+                            a.bbox.bottom_left.x.partial_cmp(&b.bbox.bottom_left.x).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        lines.push(current_line);
+                        current_line = Vec::new();
+                    }
+
+                    // If the gap is significantly larger than normal, insert blank lines
+                    if y_gap > Self::BLANK_LINE_THRESHOLD_POINTS {
+                        // Calculate how many blank lines to insert based on the gap
+                        let blank_lines = ((y_gap - Self::POINTS_PER_LINE) / Self::POINTS_PER_LINE).round() as usize;
+                        // for _ in 0..blank_lines {
+                        if blank_lines >= 1 {
+                            lines.push(Vec::new());
+                        }
+                    }
+                }
+            }
+
+            current_line.push(span);
+            last_y = Some(span_y);
+            last_page = Some(span_page);
+        }
+
+        if !current_line.is_empty() {
+            // Sort the last line
+            current_line.sort_by(|a, b| {
+                a.bbox.bottom_left.x.partial_cmp(&b.bbox.bottom_left.x).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            lines.push(current_line);
+        }
+
+        lines
+    }
+
+    fn flush_string(&mut self) -> Result<(), OutputError> {
+        if self.buf.len() != 0 {
+            // buf_start_x, buf_end_x, and buf_start_y are already in flipped coordinates
+            // (they come from position.m31/m32 where position = trm.post_transform(&self.flip_ctm))
+            // So we can use them directly for the bounding box
+            let bottom_left_x = self.buf_start_x;
+            let bottom_right_x = self.buf_end_x;
+            let bottom_y = self.buf_start_y;
+
+            // Get the top Y by adding transformed font size
+            let transformed_font_size_vec = self.buf_ctm.transform_vector(euclid::vec2(self.buf_font_size, self.buf_font_size));
+            let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
+            let top_y = self.buf_start_y + transformed_font_size;
+
+            let bbox = BoundingBox {
+                top_left: Point { x: bottom_left_x, y: top_y },
+                top_right: Point { x: bottom_right_x, y: top_y },
+                bottom_left: Point { x: bottom_left_x, y: bottom_y },
+                bottom_right: Point { x: bottom_right_x, y: bottom_y },
+            };
+
+            self.spans.push(TextSpan {
+                text: self.buf.clone(),
+                bbox,
+                font_size: self.buf_font_size,
+                page_num: self.current_page,
+            });
+
+            self.buf.clear();
+        }
+        Ok(())
+    }
+}
+
+impl OutputDev for BoundingBoxOutput {
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, _: Option<ArtBox>) -> Result<(), OutputError> {
+        self.current_page = page_num;
+        self.flip_ctm = Transform::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
+        Ok(())
+    }
+
+    fn end_page(&mut self) -> Result<(), OutputError> {
+        self.flush_string()?;
+        Ok(())
+    }
+
+    fn output_character(&mut self, trm: &Transform, width: f64, _spacing: f64, font_size: f64, char: &str) -> Result<(), OutputError> {
+        let position = trm.post_transform(&self.flip_ctm);
+        let transformed_font_size_vec = trm.transform_vector(vec2(font_size, font_size));
+        let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
+        let (x, y) = (position.m31, position.m32);
+
+        let normalized_char = if char == "\t" { " " } else { char };
+
+        if self.buf.is_empty() {
+            // First character of a new span (either very first, or after flush)
+            self.buf_start_x = x;
+            self.buf_start_y = y;
+            self.buf_font_size = font_size;
+            self.buf_ctm = *trm;
+            self.buf = normalized_char.to_owned();
+        } else {
+            // Have existing buffer - check if should flush or add to it
+
+            // Fix buf_end_x if previous character had width=0 but actually occupies space
+            // (PDF width metric is 0, but character visually extends to where next char starts)
+            // Only do this for characters on the SAME line - don't merge across line breaks
+            if self.buf_end_x == self.last_x && (y - self.last_y).abs() < transformed_font_size * 0.5 {
+                // Previous char had PDF width=0, we're on the same line
+                // The actual visual end is where the current character starts
+                self.buf_end_x = x;
+            }
+
+            let gap = x - self.buf_end_x;
+            // Calculate gap ratio normalized by font size
+            let gap_ratio = gap / transformed_font_size;
+
+            let y_gap = (y - self.last_y).abs();
+            let should_flush =
+                y_gap > transformed_font_size * 1.5 ||
+                (x < self.buf_end_x && y_gap > transformed_font_size * 0.5) ||
+                (gap_ratio > Self::CHAR_FLUSH_THRESHOLD_RATIO);
+
+            if should_flush {
+                self.flush_string()?;
+                self.buf_start_x = x;
+                self.buf_start_y = y;
+                self.buf_font_size = font_size;
+                self.buf_ctm = *trm;
+                self.buf = normalized_char.to_owned();
+            } else {
+                // Don't insert space if the previous character was already whitespace
+                let prev_char_is_space = self.buf.chars().last().map_or(false, |c| c.is_whitespace());
+                let will_insert_space = !prev_char_is_space && (gap_ratio > Self::CHAR_SPACE_THRESHOLD_RATIO);
+
+                if will_insert_space {
+                    self.buf += " ";
+                }
+                self.buf += normalized_char;
+            }
+        }
+
+        self.first_char = false;
+        self.last_x = x;
+        self.last_y = y;
+        self.buf_end_x = x + width * transformed_font_size;
+
+        Ok(())
+    }
+
+    fn begin_word(&mut self) -> Result<(), OutputError> {
+        self.first_char = true;
+        Ok(())
+    }
+
+    fn end_word(&mut self) -> Result<(), OutputError> { Ok(()) }
+    fn end_line(&mut self) -> Result<(), OutputError> { Ok(()) }
+}
+
 
 pub fn print_metadata(doc: &Document) {
     dlog!("Version: {}", doc.version);
@@ -2343,6 +2776,42 @@ pub fn extract_text_from_mem_by_pages_encrypted(buffer: &[u8], password: &str) -
         }
     }
     Ok(v)
+}
+
+pub fn extract_text_with_bounds<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<TextPage, OutputError> {
+    let mut output = BoundingBoxOutput::new();
+    let mut doc = Document::load(path)?;
+    maybe_decrypt(&mut doc)?;
+    output_doc(&doc, &mut output)?;
+    Ok(output.into_lines())
+}
+
+pub fn extract_text_with_bounds_encrypted<P: std::convert::AsRef<std::path::Path>>(
+    path: P,
+    password: &str,
+) -> Result<TextPage, OutputError> {
+    let mut output = BoundingBoxOutput::new();
+    let mut doc = Document::load(path)?;
+    output_doc_encrypted(&mut doc, &mut output, password)?;
+    Ok(output.into_lines())
+}
+
+pub fn extract_text_with_bounds_from_mem(buffer: &[u8]) -> Result<TextPage, OutputError> {
+    let mut output = BoundingBoxOutput::new();
+    let mut doc = Document::load_mem(buffer)?;
+    maybe_decrypt(&mut doc)?;
+    output_doc(&doc, &mut output)?;
+    Ok(output.into_lines())
+}
+
+pub fn extract_text_with_bounds_from_mem_encrypted(
+    buffer: &[u8],
+    password: &str,
+) -> Result<TextPage, OutputError> {
+    let mut output = BoundingBoxOutput::new();
+    let mut doc = Document::load_mem(buffer)?;
+    output_doc_encrypted(&mut doc, &mut output, password)?;
+    Ok(output.into_lines())
 }
 
 
