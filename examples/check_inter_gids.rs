@@ -1,5 +1,3 @@
-extern crate ttf_parser;
-
 use std::fs;
 
 fn main() {

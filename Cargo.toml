@@ -1,5 +1,9 @@
+[workspace]
+members = [".", "cli"]
+resolver = "2"
+
 [package]
-name = "pdf-extract"
+name = "pdf-strings"
 version = "0.10.0"
 description = "Parse structured spans of strings from PDF files"
 repository = "https://github.com/bbqsrc/pdf-strings"

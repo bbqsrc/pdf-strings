@@ -1,5 +1,3 @@
-extern crate lopdf;
-
 use lopdf::{Document, Object};
 use std::env;
 use std::fs::File;

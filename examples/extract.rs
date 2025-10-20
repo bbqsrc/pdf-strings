@@ -1,41 +1,47 @@
-extern crate lopdf;
-extern crate pdf_extract;
-
-use lopdf::*;
-use pdf_extract::*;
-use simple_logger::SimpleLogger;
 use std::env;
-use std::fs::File;
-use std::io::BufWriter;
-use std::path;
-use std::path::PathBuf;
 
 fn main() {
-    SimpleLogger::new().init().unwrap();
-    let file = env::args().nth(1).unwrap();
-    let output_kind = env::args().nth(2).unwrap_or_else(|| "txt".to_owned());
-    println!("{}", file);
-    let path = path::Path::new(&file);
-    let filename = path.file_name().expect("expected a filename");
-    let mut output_file = PathBuf::new();
-    output_file.push(filename);
-    output_file.set_extension(&output_kind);
-    let mut output_file =
-        BufWriter::new(File::create(output_file).expect("could not create output"));
-    let mut doc = Document::load(path).unwrap();
+    simple_logger::SimpleLogger::new().init().unwrap();
 
-    print_metadata(&doc);
-
-    let mut output: Box<dyn OutputDev> = match output_kind.as_ref() {
-        "txt" => Box::new(PlainTextOutput::new(
-            &mut output_file as &mut dyn std::io::Write,
-        )),
-        _ => panic!("Only 'txt' output format is supported"),
-    };
-
-    if doc.is_encrypted() {
-        doc.decrypt("");
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Usage: {} <pdf_file> [password]", args[0]);
+        std::process::exit(1);
     }
 
-    output_doc(&doc, output.as_mut());
+    let path = &args[1];
+    let password = args.get(2);
+
+    let output = if let Some(pwd) = password {
+        // With password
+        pdf_strings::PdfExtractor::builder()
+            .password(pwd)
+            .build()
+            .from_path(path)
+    } else {
+        // Without password (convenience function)
+        pdf_strings::from_path(path)
+    };
+
+    match output {
+        Ok(text_output) => {
+            println!("=== Plain Text (via Display) ===\n");
+            println!("{}", text_output);
+
+            println!("\n=== Pretty Formatted (preserves layout) ===\n");
+            println!("{}", text_output.to_string_pretty());
+
+            println!("\n=== Structured Data Access ===\n");
+            for (line_idx, line) in text_output.lines().iter().enumerate().take(5) {
+                println!("Line {}:", line_idx);
+                for span in line {
+                    println!("  Text: {:?}, BBox: {}", span.text, span.bbox);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error extracting text: {}", e);
+            std::process::exit(1);
+        }
+    }
 }

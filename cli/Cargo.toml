@@ -1,0 +1,16 @@
+[package]
+name = "pdf-strings-cli"
+version = "0.1.0"
+edition = "2024"
+authors = [
+    "Brendan Molloy <brendan@bbqsrc.net>",
+]
+license = "MIT"
+
+[[bin]]
+name = "pdf-strings"
+path = "src/main.rs"
+
+[dependencies]
+pdf-strings = { path = ".." }
+clap = { version = "4", features = ["derive"] }

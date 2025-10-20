@@ -1,14 +1,13 @@
-## pdf-extract
+## pdf-strings
 [![Build Status](https://github.com/jrmuizel/pdf-extract/actions/workflows/rust.yml/badge.svg)](https://github.com/jrmuizel/pdf-extract/actions)
-[![crates.io](https://img.shields.io/crates/v/pdf-extract.svg)](https://crates.io/crates/pdf-extract)
-[![Documentation](https://docs.rs/pdf-extract/badge.svg)](https://docs.rs/pdf-extract)
+[![crates.io](https://img.shields.io/crates/v/pdf-strings.svg)](https://crates.io/crates/pdf-strings)
+[![Documentation](https://docs.rs/pdf-strings/badge.svg)](https://docs.rs/pdf-strings)
 
-A rust library to extract content from PDF files.
+A rust library to extract text content from PDF files.
 
 ```rust
-let bytes = std::fs::read("tests/docs/simple.pdf").unwrap();
-let out = pdf_extract::extract_text_from_mem(&bytes).unwrap();
-assert!(out.contains("This is a small demonstration"));
+let output = pdf_strings::from_path("tests/docs/simple.pdf").unwrap();
+assert!(output.to_string().contains("This is a small demonstration"));
 ```
 
 ## See also

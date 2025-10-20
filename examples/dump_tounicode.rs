@@ -1,6 +1,3 @@
-extern crate lopdf;
-extern crate pdf_extract;
-
 use lopdf::{Document, Object};
 use std::env;
 
