@@ -12,9 +12,6 @@ use std::path::PathBuf;
 
 fn main() {
     SimpleLogger::new().init().unwrap();
-    //let output_kind = "html";
-    //let output_kind = "txt";
-    //let output_kind = "svg";
     let file = env::args().nth(1).unwrap();
     let output_kind = env::args().nth(2).unwrap_or_else(|| "txt".to_owned());
     println!("{}", file);
@@ -33,9 +30,7 @@ fn main() {
         "txt" => Box::new(PlainTextOutput::new(
             &mut output_file as &mut dyn std::io::Write,
         )),
-        "html" => Box::new(HTMLOutput::new(&mut output_file)),
-        "svg" => Box::new(SVGOutput::new(&mut output_file)),
-        _ => panic!(),
+        _ => panic!("Only 'txt' output format is supported"),
     };
 
     if doc.is_encrypted() {
