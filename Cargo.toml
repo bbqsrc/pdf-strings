@@ -1,14 +1,16 @@
 [package]
-authors = ["Jeff Muizelaar <jmuizelaar@mozilla.com>"]
-description = "A library to extract content from pdfs"
-documentation = "https://docs.rs/crate/pdf-extract/"
-edition = "2018"
-keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
-license = "MIT"
 name = "pdf-extract"
-repository = "https://github.com/jrmuizel/pdf-extract"
 version = "0.10.0"
-include = ["src/**/*", "README.md"]
+description = "Parse structured spans of strings from PDF files"
+repository = "https://github.com/bbqsrc/pdf-strings"
+documentation = "https://docs.rs/crate/pdf-strings/"
+authors = [
+    "Jeff Muizelaar <jmuizelaar@mozilla.com>",
+    "Brendan Molloy <brendan@bbqsrc.net>",
+]
+keywords = ["pdf", "text-extraction", "font", "cmap", "unicode"]
+license = "MIT"
+edition = "2018"
 
 [profile.release]
 debug = true
@@ -23,6 +25,7 @@ type1-encoding-parser = "0.1.0"
 unicode-normalization = "0.1.19"
 cff-parser = "0.1.0"
 log = "0.4.22"
+ttf-parser = "0.25"
 
 [dev-dependencies]
 ureq = "2.6.2"

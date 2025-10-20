@@ -6,7 +6,9 @@ use std::env;
 fn main() {
     simple_logger::SimpleLogger::new().init().unwrap();
 
-    let file = env::args().nth(1).expect("Usage: extract_bounds <pdf_file>");
+    let file = env::args()
+        .nth(1)
+        .expect("Usage: extract_bounds <pdf_file>");
 
     match pdf_extract::extract_text_with_bounds(&file) {
         Ok(lines) => {
@@ -15,10 +17,22 @@ fn main() {
                 println!("\nLine {}:", line_idx);
                 for (span_idx, span) in line.iter().enumerate() {
                     println!("  Span {}: {:?}", span_idx, span.text);
-                    print!("    ({:.2}, {:.2})", span.bbox.top_left.x, span.bbox.top_left.y);
-                    print!(" ({:.2}, {:.2})", span.bbox.top_right.x, span.bbox.top_right.y);
-                    print!(" ({:.2}, {:.2})", span.bbox.bottom_left.x, span.bbox.bottom_left.y);
-                    println!(" ({:.2}, {:.2})", span.bbox.bottom_right.x, span.bbox.bottom_right.y);
+                    print!(
+                        "    ({:.2}, {:.2})",
+                        span.bbox.top_left.x, span.bbox.top_left.y
+                    );
+                    print!(
+                        " ({:.2}, {:.2})",
+                        span.bbox.top_right.x, span.bbox.top_right.y
+                    );
+                    print!(
+                        " ({:.2}, {:.2})",
+                        span.bbox.bottom_left.x, span.bbox.bottom_left.y
+                    );
+                    println!(
+                        " ({:.2}, {:.2})",
+                        span.bbox.bottom_right.x, span.bbox.bottom_right.y
+                    );
                 }
             }
 
@@ -46,7 +60,8 @@ fn main() {
                         // For right-aligned spans, find which cluster position it belongs to
                         // and align to that cluster position (not the span's own end position)
                         let span_right_x = span.bbox.bottom_right.x;
-                        let cluster_position = right_aligned_positions.iter()
+                        let cluster_position = right_aligned_positions
+                            .iter()
                             .find(|&&pos_x| (span_right_x - pos_x).abs() < ALIGNMENT_THRESHOLD)
                             .expect("span should match a cluster position");
 
