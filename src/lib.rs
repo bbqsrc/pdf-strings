@@ -10,10 +10,7 @@ use lopdf::{Dictionary, Document, Object, Stream, StringFormat};
 use tracing::{debug, warn};
 use unicode_normalization::UnicodeNormalization;
 
-mod core_fonts;
-mod encodings;
-mod glyphnames;
-mod zapfglyphnames;
+mod data;
 
 pub struct Space;
 pub type Transform = Transform2D<f64, Space, Space>;
@@ -370,16 +367,20 @@ fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Rc<dyn PdfFont + 'a
 
 fn encoding_to_unicode_table(name: &[u8]) -> Vec<u16> {
     let encoding = match &name[..] {
-        b"MacRomanEncoding" => encodings::MAC_ROMAN_ENCODING,
-        b"MacExpertEncoding" => encodings::MAC_EXPERT_ENCODING,
-        b"WinAnsiEncoding" => encodings::WIN_ANSI_ENCODING,
+        b"MacRomanEncoding" => data::MAC_ROMAN_ENCODING,
+        b"MacExpertEncoding" => data::MAC_EXPERT_ENCODING,
+        b"WinAnsiEncoding" => data::WIN_ANSI_ENCODING,
         _ => panic!("unexpected encoding {:?}", pdf_to_utf8(name)),
     };
     let encoding_table = encoding
         .iter()
         .map(|x| {
             if let &Some(x) = x {
-                glyphnames::name_to_unicode(x).unwrap()
+                data::GLYPH_NAMES
+                    .binary_search_by_key(&x, |&(n, _)| n)
+                    .ok()
+                    .map(|i| data::GLYPH_NAMES[i].1)
+                    .unwrap()
             } else {
                 0
             }
@@ -402,10 +403,7 @@ impl<'a> PdfSimpleFont<'a> {
         let encoding: Option<&Object> = get(doc, font, b"Encoding");
         debug!(
             "base_name {} {} enc:{:?} {:?}",
-            base_name,
-            subtype,
-            encoding,
-            font
+            base_name, subtype, encoding, font
         );
         let descriptor: Option<&Dictionary> = get(doc, font, b"FontDescriptor");
         let mut type1_encoding = None;
@@ -453,8 +451,16 @@ impl<'a> PdfSimpleFont<'a> {
                             let cid = encoding[i];
                             let sid = charset[i];
                             let name = cff_parser::string_by_id(&table, sid).unwrap();
-                            let unicode = glyphnames::name_to_unicode(&name)
-                                .or_else(|| zapfglyphnames::zapfdigbats_names_to_unicode(name));
+                            let unicode = data::GLYPH_NAMES
+                                .binary_search_by_key(&name, |&(n, _)| n)
+                                .ok()
+                                .map(|i| data::GLYPH_NAMES[i].1)
+                                .or_else(|| {
+                                    data::ZAPF_DINGBATS_NAMES
+                                        .binary_search_by_key(&name, |&(n, _)| n)
+                                        .ok()
+                                        .map(|i| data::ZAPF_DINGBATS_NAMES[i].1)
+                                });
                             if let Some(unicode) = unicode {
                                 let str = String::from_utf16(&[unicode]).unwrap();
                                 mapping.insert(cid as u32, str);
@@ -519,7 +525,10 @@ impl<'a> PdfSimpleFont<'a> {
                                 let name = pdf_to_utf8(&n);
                                 // XXX: names of Type1 fonts can map to arbitrary strings instead of real
                                 // unicode names, so we should probably handle this differently
-                                let unicode = glyphnames::name_to_unicode(&name);
+                                let unicode = data::GLYPH_NAMES
+                                    .binary_search_by_key(&name.as_str(), |&(n, _)| n)
+                                    .ok()
+                                    .map(|i| data::GLYPH_NAMES[i].1);
                                 if let Some(unicode) = unicode {
                                     table[code as usize] = unicode;
                                     if let Some(ref mut unicode_map) = unicode_map {
@@ -603,7 +612,11 @@ impl<'a> PdfSimpleFont<'a> {
                     let mut table = Vec::from(PDFDocEncoding);
                     debug!("type1encoding");
                     for (code, name) in type1_encoding {
-                        let unicode = glyphnames::name_to_unicode(&pdf_to_utf8(&name));
+                        let name_str = pdf_to_utf8(&name);
+                        let unicode = data::GLYPH_NAMES
+                            .binary_search_by_key(&name_str.as_str(), |&(n, _)| n)
+                            .ok()
+                            .map(|i| data::GLYPH_NAMES[i].1);
                         if let Some(unicode) = unicode {
                             table[code as usize] = unicode;
                         } else {
@@ -613,11 +626,15 @@ impl<'a> PdfSimpleFont<'a> {
                     encoding_table = Some(table)
                 } else if subtype == "TrueType" {
                     encoding_table = Some(
-                        encodings::WIN_ANSI_ENCODING
+                        data::WIN_ANSI_ENCODING
                             .iter()
                             .map(|x| {
                                 if let &Some(x) = x {
-                                    glyphnames::name_to_unicode(x).unwrap()
+                                    data::GLYPH_NAMES
+                                        .binary_search_by_key(&x, |&(n, _)| n)
+                                        .ok()
+                                        .map(|i| data::GLYPH_NAMES[i].1)
+                                        .unwrap()
                                 } else {
                                     0
                                 }
@@ -661,12 +678,16 @@ impl<'a> PdfSimpleFont<'a> {
             }
             assert_eq!(first_char + i - 1, last_char);
         } else {
-            for font_metrics in core_fonts::metrics().iter() {
+            for font_metrics in data::CORE_FONT_METRICS.iter() {
                 if font_metrics.0 == base_name {
                     if let Some(ref encoding) = encoding_table {
                         debug!("has encoding");
                         for w in font_metrics.2 {
-                            let c = glyphnames::name_to_unicode(w.2).unwrap();
+                            let c = data::GLYPH_NAMES
+                                .binary_search_by_key(&w.2, |&(n, _)| n)
+                                .ok()
+                                .map(|i| data::GLYPH_NAMES[i].1)
+                                .unwrap();
                             for i in 0..encoding.len() {
                                 if encoding[i] == c {
                                     width_map.insert(i as CharCode, w.1 as f64);
@@ -684,10 +705,17 @@ impl<'a> PdfSimpleFont<'a> {
                             // -1 is "not encoded"
                             if w.0 != -1 {
                                 table[w.0 as usize] = if base_name == "ZapfDingbats" {
-                                    zapfglyphnames::zapfdigbats_names_to_unicode(w.2)
+                                    data::ZAPF_DINGBATS_NAMES
+                                        .binary_search_by_key(&w.2, |&(n, _)| n)
+                                        .ok()
+                                        .map(|i| data::ZAPF_DINGBATS_NAMES[i].1)
                                         .unwrap_or_else(|| panic!("bad name {:?}", w))
                                 } else {
-                                    glyphnames::name_to_unicode(w.2).unwrap()
+                                    data::GLYPH_NAMES
+                                        .binary_search_by_key(&w.2, |&(n, _)| n)
+                                        .ok()
+                                        .map(|i| data::GLYPH_NAMES[i].1)
+                                        .unwrap()
                                 }
                             }
                         }
@@ -791,7 +819,10 @@ impl<'a> PdfType3Font<'a> {
                                 let name = pdf_to_utf8(&n);
                                 // XXX: names of Type1 fonts can map to arbitrary strings instead of real
                                 // unicode names, so we should probably handle this differently
-                                let unicode = glyphnames::name_to_unicode(&name);
+                                let unicode = data::GLYPH_NAMES
+                                    .binary_search_by_key(&name.as_str(), |&(n, _)| n)
+                                    .ok()
+                                    .map(|i| data::GLYPH_NAMES[i].1);
                                 if let Some(unicode) = unicode {
                                     table[code as usize] = unicode;
                                 }
@@ -1748,11 +1779,7 @@ fn show_text(
         let tx = ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size + spacing);
         debug!(
             "horizontal {} adjust {} {} {} {}",
-            ts.horizontal_scaling,
-            tx,
-            w0,
-            ts.font_size,
-            spacing
+            ts.horizontal_scaling, tx, w0, ts.font_size, spacing
         );
         // debug!("w0: {}, tx: {}", w0, tx);
         ts.tm = ts
@@ -1789,25 +1816,41 @@ pub struct BoundingBox {
 
 impl BoundingBox {
     pub fn top_left(&self) -> Point {
-        Point { x: self.l, y: self.t }
+        Point {
+            x: self.l,
+            y: self.t,
+        }
     }
 
     pub fn top_right(&self) -> Point {
-        Point { x: self.r, y: self.t }
+        Point {
+            x: self.r,
+            y: self.t,
+        }
     }
 
     pub fn bottom_left(&self) -> Point {
-        Point { x: self.l, y: self.b }
+        Point {
+            x: self.l,
+            y: self.b,
+        }
     }
 
     pub fn bottom_right(&self) -> Point {
-        Point { x: self.r, y: self.b }
+        Point {
+            x: self.r,
+            y: self.b,
+        }
     }
 }
 
 impl std::fmt::Display for BoundingBox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "(t: {:.1}, r: {:.1}, b: {:.1}, l: {:.1})", self.t, self.r, self.b, self.l)
+        write!(
+            f,
+            "(t: {:.1}, r: {:.1}, b: {:.1}, l: {:.1})",
+            self.t, self.r, self.b, self.l
+        )
     }
 }
 

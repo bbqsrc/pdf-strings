@@ -1,5 +1,4 @@
-pub fn zapfdigbats_names_to_unicode(name: &str) -> Option<u16> {
-    let names = [
+pub const ZAPF_DINGBATS_NAMES: [(&str, u16); 202] = [
         ("a1", 0x2701),
         ("a10", 0x2721),
         ("a100", 0x275e),
@@ -202,8 +201,4 @@ pub fn zapfdigbats_names_to_unicode(name: &str) -> Option<u16> {
         ("a98", 0x275c),
         ("a99", 0x275d),
         ("space", 0x0020),
-    ];
-
-    let result = names.binary_search_by_key(&name, |&(name, _code)| &name);
-    result.ok().map(|indx| names[indx].1)
-}
+];
