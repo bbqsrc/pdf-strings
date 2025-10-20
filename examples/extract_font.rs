@@ -11,7 +11,7 @@ fn main() {
     let doc = Document::load(&file).expect("Failed to load PDF");
 
     for (object_id, object) in doc.objects.iter() {
-        if let Object::Dictionary(ref dict) = object {
+        if let Object::Dictionary(dict) = object {
             if let Ok(Object::Name(subtype)) = dict.get(b"Subtype") {
                 if subtype == b"Type0" {
                     if let Ok(Object::Name(base_font)) = dict.get(b"BaseFont") {

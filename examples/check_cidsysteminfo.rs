@@ -10,7 +10,7 @@ fn main() {
     let doc = Document::load(&file).expect("Failed to load PDF");
 
     for (object_id, object) in doc.objects.iter() {
-        if let Object::Dictionary(ref dict) = object {
+        if let Object::Dictionary(dict) = object {
             // Check for Type0 fonts
             if let Ok(Object::Name(subtype)) = dict.get(b"Subtype") {
                 if subtype == b"Type0" {
@@ -36,12 +36,12 @@ fn main() {
                                 // Check CIDSystemInfo
                                 if let Ok(cidsysinfo_ref) = desc_dict.get(b"CIDSystemInfo") {
                                     match cidsysinfo_ref {
-                                        Object::Reference(ref r) => {
-                                            if let Ok(Object::Dictionary(ref csi_dict)) =
+                                        Object::Reference(r) => {
+                                            if let Ok(Object::Dictionary(csi_dict)) =
                                                 doc.get_object(*r)
                                             {
                                                 println!("  CIDSystemInfo:");
-                                                if let Ok(Object::String(ref registry, _)) =
+                                                if let Ok(Object::String(registry, _)) =
                                                     csi_dict.get(b"Registry")
                                                 {
                                                     println!(
@@ -49,7 +49,7 @@ fn main() {
                                                         String::from_utf8_lossy(registry)
                                                     );
                                                 }
-                                                if let Ok(Object::String(ref ordering, _)) =
+                                                if let Ok(Object::String(ordering, _)) =
                                                     csi_dict.get(b"Ordering")
                                                 {
                                                     println!(
@@ -64,9 +64,9 @@ fn main() {
                                                 }
                                             }
                                         }
-                                        Object::Dictionary(ref csi_dict) => {
+                                        Object::Dictionary(csi_dict) => {
                                             println!("  CIDSystemInfo:");
-                                            if let Ok(Object::String(ref registry, _)) =
+                                            if let Ok(Object::String(registry, _)) =
                                                 csi_dict.get(b"Registry")
                                             {
                                                 println!(
@@ -74,7 +74,7 @@ fn main() {
                                                     String::from_utf8_lossy(registry)
                                                 );
                                             }
-                                            if let Ok(Object::String(ref ordering, _)) =
+                                            if let Ok(Object::String(ordering, _)) =
                                                 csi_dict.get(b"Ordering")
                                             {
                                                 println!(

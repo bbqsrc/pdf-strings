@@ -1,30 +1,16 @@
-extern crate lopdf;
-extern crate ttf_parser;
+use std::collections::{HashMap, hash_map::Entry};
+use std::fmt::{self, Debug, Formatter};
+use std::{fs::File, marker::PhantomData, rc::Rc, slice::Iter, str};
 
 use adobe_cmap_parser::{ByteMapping, CIDRange, CodeRange};
 use encoding_rs::UTF_16BE;
-use euclid::*;
+use euclid::{Transform2D, vec2};
 use lopdf::content::Content;
 use lopdf::encryption::DecryptionError;
-pub use lopdf::*;
-use std::fmt::{Debug, Formatter};
-extern crate adobe_cmap_parser;
-extern crate encoding_rs;
-extern crate euclid;
-extern crate type1_encoding_parser;
-extern crate unicode_normalization;
-use euclid::vec2;
-use log::{debug, error, warn};
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
-use std::fmt;
-use std::fs::File;
-use std::marker::PhantomData;
-use std::rc::Rc;
-use std::result::Result;
-use std::slice::Iter;
-use std::str;
+use lopdf::{Dictionary, Document, Error, Object, ObjectId, Stream, StringFormat};
+use tracing::{debug, error, warn};
 use unicode_normalization::UnicodeNormalization;
+
 mod core_fonts;
 mod encodings;
 mod glyphnames;
@@ -601,7 +587,7 @@ impl<'a> PdfSimpleFont<'a> {
                                                 Entry::Vacant(v) => {
                                                     v.insert("".to_owned());
                                                 }
-                                                Entry::Occupied(e) => {
+                                                Entry::Occupied(_e) => {
                                                     panic!("unexpected entry in unicode map")
                                                 }
                                             }
@@ -810,7 +796,7 @@ impl<'a> PdfSimpleFont<'a> {
     }
 
     #[allow(dead_code)]
-    fn get_descriptor(&self) -> Option<PdfFontDescriptor> {
+    fn get_descriptor(&self) -> Option<PdfFontDescriptor<'_>> {
         maybe_get_obj(self.doc, self.font, b"FontDescriptor")
             .and_then(|desc| desc.as_dict().ok())
             .map(|desc| PdfFontDescriptor {
@@ -939,7 +925,7 @@ trait PdfFont: Debug {
 }
 
 impl<'a> dyn PdfFont + 'a {
-    fn char_codes(&'a self, chars: &'a [u8]) -> PdfFontIter {
+    fn char_codes(&'a self, chars: &'a [u8]) -> PdfFontIter<'a> {
         PdfFontIter {
             i: chars.iter(),
             font: self,
@@ -1631,14 +1617,14 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
             return self.default_width.unwrap();
         }
     } /*
-      fn decode(&self, chars: &[u8]) -> String {
-          self.char_codes(chars);
+    fn decode(&self, chars: &[u8]) -> String {
+    self.char_codes(chars);
 
-          //let utf16 = Vec::new();
+    //let utf16 = Vec::new();
 
-          let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
-          to_utf8(encoding, chars)
-      }*/
+    let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+    to_utf8(encoding, chars)
+    }*/
 
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)> {
         let mut c = *iter.next()? as u32;
@@ -3283,7 +3269,9 @@ fn maybe_decrypt(doc: &mut Document) -> Result<(), OutputError> {
 
     if let Err(e) = doc.decrypt("") {
         if let Error::Decryption(DecryptionError::IncorrectPassword) = e {
-            error!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted")
+            error!(
+                "Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted"
+            )
         }
 
         return Err(OutputError::PdfError(e));
@@ -3472,7 +3460,9 @@ pub fn output_doc_encrypted(
 /// Parse a given document and output it to `output`
 pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), OutputError> {
     if doc.is_encrypted() {
-        error!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
+        error!(
+            "Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted"
+        );
     }
     let empty_resources = Dictionary::new();
     let pages = doc.get_pages();
@@ -3491,7 +3481,9 @@ pub fn output_doc_page(
     page_num: u32,
 ) -> Result<(), OutputError> {
     if doc.is_encrypted() {
-        error!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
+        error!(
+            "Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted"
+        );
     }
     let empty_resources = Dictionary::new();
     let pages = doc.get_pages();

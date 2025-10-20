@@ -1,6 +1,6 @@
-use log::info;
 use pdf_extract::extract_text;
 use test_log::test;
+use tracing::info;
 // Shorthand for creating ExpectedText
 // example: expected!("atomic.pdf", "Atomic Data");
 macro_rules! expected {

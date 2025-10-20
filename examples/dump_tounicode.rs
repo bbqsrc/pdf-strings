@@ -12,10 +12,10 @@ fn main() {
     let doc = Document::load(&file).expect("Failed to load PDF");
 
     for (object_id, object) in doc.objects.iter() {
-        if let Object::Dictionary(ref dict) = object {
+        if let Object::Dictionary(dict) = object {
             if let Ok(Object::Name(subtype)) = dict.get(b"Subtype") {
                 if subtype == b"Type0" || subtype == b"CIDFontType0" || subtype == b"CIDFontType2" {
-                    if let Ok(Object::Reference(ref font_ref)) = dict
+                    if let Ok(Object::Reference(_)) = dict
                         .get(b"ToUnicode")
                         .or_else(|_| dict.get(b"DescendantFonts"))
                     {
@@ -26,7 +26,7 @@ fn main() {
 
             if let Ok(to_unicode_obj) = dict.get(b"ToUnicode") {
                 if let Object::Reference(ref_id) = to_unicode_obj {
-                    if let Ok(Object::Stream(ref stream)) = doc.get_object(*ref_id) {
+                    if let Ok(Object::Stream(stream)) = doc.get_object(*ref_id) {
                         let contents = stream.decompressed_content().expect("Failed to decompress");
                         let text = String::from_utf8_lossy(&contents);
 

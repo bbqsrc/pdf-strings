@@ -26,7 +26,7 @@ fn main() {
             obj => obj,
         };
 
-        if let lopdf::Object::Stream(ref stream) = contents {
+        if let lopdf::Object::Stream(stream) = contents {
             let decoded = stream.decompressed_content().expect("Failed to decompress");
             let content_str = String::from_utf8_lossy(&decoded);
 
