@@ -22,7 +22,7 @@ debug = true
 [dependencies]
 adobe-cmap-parser = "0.4.1"
 encoding_rs = "0.8.34"
-euclid = "0.20"
+euclid = "0.22.11"
 lopdf = {version = "0.38", default-features = false}
 type1-encoding-parser = "0.1.0"
 unicode-normalization = "0.1.19"

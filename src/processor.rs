@@ -49,9 +49,9 @@ fn show_text(
 
     for (c, length) in font.char_codes(s) {
         // 5.3.3 Text Space Details
-        let tsm = Transform2D::row_major(ts.horizontal_scaling, 0., 0., 1.0, 0., ts.rise);
+        let tsm = Transform2D::new(ts.horizontal_scaling, 0., 0., 1.0, 0., ts.rise);
         // Trm = Tsm × Tm × CTM
-        let trm = tsm.post_transform(&ts.tm.post_transform(&gs.ctm));
+        let trm = tsm.then(&ts.tm.then(&gs.ctm));
 
         let w0 = font.get_width(c) / 1000.;
 
@@ -73,10 +73,8 @@ fn show_text(
             "horizontal {} adjust {} {} {} {}",
             ts.horizontal_scaling, tx, w0, ts.font_size, spacing
         );
-        ts.tm = ts
-            .tm
-            .pre_transform(&Transform2D::create_translation(tx, ty));
-        let _trm = ts.tm.pre_transform(&gs.ctm);
+        ts.tm = Transform2D::translation(tx, ty).then(&ts.tm);
+        let _trm = gs.ctm.then(&ts.tm);
     }
     output.end_word()?;
     Ok(())
@@ -155,7 +153,7 @@ impl<'a> Processor<'a> {
         let mut gs_stack = Vec::new();
         let mut mc_stack = Vec::new();
         let mut tlm = Transform2D::identity();
-        let flip_ctm = Transform2D::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
+        let flip_ctm = Transform2D::new(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
         debug!("MediaBox {:?}", media_box);
         for operation in &content.operations {
             match operation.operator.as_ref() {
@@ -169,7 +167,7 @@ impl<'a> Processor<'a> {
                 }
                 "cm" => {
                     assert!(operation.operands.len() == 6);
-                    let m = Transform2D::row_major(
+                    let m = Transform2D::new(
                         as_num(&operation.operands[0]),
                         as_num(&operation.operands[1]),
                         as_num(&operation.operands[2]),
@@ -177,7 +175,7 @@ impl<'a> Processor<'a> {
                         as_num(&operation.operands[4]),
                         as_num(&operation.operands[5]),
                     );
-                    gs.ctm = gs.ctm.pre_transform(&m);
+                    gs.ctm = m.then(&gs.ctm);
                     debug!("matrix {:?}", gs.ctm);
                 }
                 "TJ" => match operation.operands[0] {
@@ -194,9 +192,7 @@ impl<'a> Processor<'a> {
                                     let ty = 0.;
                                     let tx =
                                         ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size);
-                                    ts.tm = ts
-                                        .tm
-                                        .pre_transform(&Transform2D::create_translation(tx, ty));
+                                    ts.tm = Transform2D::translation(tx, ty).then(&ts.tm);
                                     debug!("adjust text by: {} {:?}", i, ts.tm);
                                 }
                                 &Object::Real(i) => {
@@ -206,9 +202,7 @@ impl<'a> Processor<'a> {
                                     let ty = 0.;
                                     let tx =
                                         ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size);
-                                    ts.tm = ts
-                                        .tm
-                                        .pre_transform(&Transform2D::create_translation(tx, ty));
+                                    ts.tm = Transform2D::translation(tx, ty).then(&ts.tm);
                                     debug!("adjust text by: {} {:?}", i, ts.tm);
                                 }
                                 _ => {
@@ -261,7 +255,7 @@ impl<'a> Processor<'a> {
                 }
                 "Tm" => {
                     assert!(operation.operands.len() == 6);
-                    tlm = Transform2D::row_major(
+                    tlm = Transform2D::new(
                         as_num(&operation.operands[0]),
                         as_num(&operation.operands[1]),
                         as_num(&operation.operands[2]),
@@ -283,7 +277,7 @@ impl<'a> Processor<'a> {
                     let ty = as_num(&operation.operands[1]);
                     debug!("translation: {} {}", tx, ty);
 
-                    tlm = tlm.pre_transform(&Transform2D::create_translation(tx, ty));
+                    tlm = Transform2D::translation(tx, ty).then(&tlm);
                     gs.ts.tm = tlm;
                     debug!("Td matrix {:?}", gs.ts.tm);
                     output.end_line()?;
@@ -299,7 +293,7 @@ impl<'a> Processor<'a> {
                     debug!("translation: {} {}", tx, ty);
                     gs.ts.leading = -ty;
 
-                    tlm = tlm.pre_transform(&Transform2D::create_translation(tx, ty));
+                    tlm = Transform2D::translation(tx, ty).then(&tlm);
                     gs.ts.tm = tlm;
                     debug!("TD matrix {:?}", gs.ts.tm);
                     output.end_line()?;
@@ -309,7 +303,7 @@ impl<'a> Processor<'a> {
                     let tx = 0.0;
                     let ty = -gs.ts.leading;
 
-                    tlm = tlm.pre_transform(&Transform2D::create_translation(tx, ty));
+                    tlm = Transform2D::translation(tx, ty).then(&tlm);
                     gs.ts.tm = tlm;
                     debug!("T* matrix {:?}", gs.ts.tm);
                     output.end_line()?;

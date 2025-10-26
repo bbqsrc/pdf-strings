@@ -193,7 +193,7 @@ impl BoundingBoxOutput {
         _: Option<ArtBox>,
     ) -> Result<(), OutputError> {
         self.current_page = page_num;
-        self.flip_ctm = Transform::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
+        self.flip_ctm = Transform::new(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
         Ok(())
     }
 
@@ -210,7 +210,7 @@ impl BoundingBoxOutput {
         font_size: f32,
         char: &str,
     ) -> Result<(), OutputError> {
-        let position = trm.post_transform(&self.flip_ctm);
+        let position = trm.then(&self.flip_ctm);
         let transformed_font_size_vec = trm.transform_vector(vec2(font_size, font_size));
         let transformed_font_size =
             (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
