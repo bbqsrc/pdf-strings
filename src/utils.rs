@@ -163,10 +163,10 @@ impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 3] {
     }
 }
 
-impl<'a> FromObj<'a> for f64 {
+impl<'a> FromObj<'a> for f32 {
     fn from_obj(_doc: &Document, obj: &Object) -> Option<Self> {
         match obj {
-            &Object::Integer(i) => Some(i as f64),
+            &Object::Integer(i) => Some(i as f32),
             &Object::Real(f) => Some(f.into()),
             _ => None,
         }
@@ -249,9 +249,9 @@ pub(crate) fn maybe_get_array<'a>(
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_array().ok())
 }
 
-pub(crate) fn as_num(o: &Object) -> f64 {
+pub(crate) fn as_num(o: &Object) -> f32 {
     match o {
-        &Object::Integer(i) => i as f64,
+        &Object::Integer(i) => i as f32,
         &Object::Real(f) => f.into(),
         _ => {
             panic!("not a number")
@@ -269,16 +269,16 @@ pub(crate) fn get_contents(contents: &Stream) -> Vec<u8> {
     }
 }
 
-pub(crate) fn detect_right_aligned_columns(lines: &TextPage) -> Vec<f64> {
-    const CLUSTER_THRESHOLD: f64 = 8.0;
+pub(crate) fn detect_right_aligned_columns(lines: &TextPage) -> Vec<f32> {
+    const CLUSTER_THRESHOLD: f32 = 8.0;
     const MIN_SPANS_FOR_COLUMN: usize = 3;
-    const MIN_LEFT_VARIATION: f64 = 50.0;
-    const MIN_COLUMN_POSITION: f64 = 200.0;
+    const MIN_LEFT_VARIATION: f32 = 50.0;
+    const MIN_COLUMN_POSITION: f32 = 200.0;
 
     #[derive(Clone)]
     struct SpanEdges {
-        left_x: f64,
-        right_x: f64,
+        left_x: f32,
+        right_x: f32,
     }
 
     let mut all_edges: Vec<SpanEdges> = Vec::new();
@@ -300,10 +300,10 @@ pub(crate) fn detect_right_aligned_columns(lines: &TextPage) -> Vec<f64> {
 
     for edges in all_edges {
         let mut found_cluster = None;
-        let mut min_distance = f64::MAX;
+        let mut min_distance = f32::MAX;
 
         for (id, cluster) in clusters.iter() {
-            let center = cluster.iter().map(|e| e.right_x).sum::<f64>() / cluster.len() as f64;
+            let center = cluster.iter().map(|e| e.right_x).sum::<f32>() / cluster.len() as f32;
             let distance = (edges.right_x - center).abs();
 
             if distance < CLUSTER_THRESHOLD && distance < min_distance {
@@ -323,24 +323,24 @@ pub(crate) fn detect_right_aligned_columns(lines: &TextPage) -> Vec<f64> {
     let mut right_aligned_positions = Vec::new();
     for cluster in clusters.values() {
         if cluster.len() >= MIN_SPANS_FOR_COLUMN {
-            let left_edges: Vec<f64> = cluster.iter().map(|e| e.left_x).collect();
-            let min_left = left_edges.iter().cloned().fold(f64::INFINITY, f64::min);
-            let max_left = left_edges.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let left_edges: Vec<f32> = cluster.iter().map(|e| e.left_x).collect();
+            let min_left = left_edges.iter().cloned().fold(f32::INFINITY, f32::min);
+            let max_left = left_edges.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
             let left_variation = max_left - min_left;
 
-            let right_edges: Vec<f64> = cluster.iter().map(|e| e.right_x).collect();
-            let min_right = right_edges.iter().cloned().fold(f64::INFINITY, f64::min);
+            let right_edges: Vec<f32> = cluster.iter().map(|e| e.right_x).collect();
+            let min_right = right_edges.iter().cloned().fold(f32::INFINITY, f32::min);
             let max_right = right_edges
                 .iter()
                 .cloned()
-                .fold(f64::NEG_INFINITY, f64::max);
+                .fold(f32::NEG_INFINITY, f32::max);
             let right_variation = max_right - min_right;
 
-            let avg_right_x = cluster.iter().map(|e| e.right_x).sum::<f64>() / cluster.len() as f64;
+            let avg_right_x = cluster.iter().map(|e| e.right_x).sum::<f32>() / cluster.len() as f32;
 
-            const MAX_RIGHT_VARIATION: f64 = 3.7;
-            const FAR_RIGHT_POSITION: f64 = 450.0;
-            const MIN_LEFT_VARIATION_FAR_RIGHT: f64 = 5.0;
+            const MAX_RIGHT_VARIATION: f32 = 3.7;
+            const FAR_RIGHT_POSITION: f32 = 450.0;
+            const MIN_LEFT_VARIATION_FAR_RIGHT: f32 = 5.0;
 
             let left_variation_threshold = if avg_right_x >= FAR_RIGHT_POSITION {
                 MIN_LEFT_VARIATION_FAR_RIGHT

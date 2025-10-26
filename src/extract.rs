@@ -20,7 +20,7 @@ fn extract_structured_from_doc(doc: &Document) -> Result<Vec<Vec<TextSpan>>, Out
         let object_id = dict.1;
         let page_dict = doc.get_object(object_id).unwrap().as_dict().unwrap();
         let resources = get_inherited(doc, page_dict, b"Resources").unwrap_or(&empty_resources);
-        let media_box: Vec<f64> = get_inherited(doc, page_dict, b"MediaBox").expect("MediaBox");
+        let media_box: Vec<f32> = get_inherited(doc, page_dict, b"MediaBox").expect("MediaBox");
         let media_box = MediaBox {
             llx: media_box[0],
             lly: media_box[1],
@@ -28,7 +28,7 @@ fn extract_structured_from_doc(doc: &Document) -> Result<Vec<Vec<TextSpan>>, Out
             ury: media_box[3],
         };
         let art_box =
-            get::<Option<Vec<f64>>>(&doc, page_dict, b"ArtBox").map(|x| (x[0], x[1], x[2], x[3]));
+            get::<Option<Vec<f32>>>(&doc, page_dict, b"ArtBox").map(|x| (x[0], x[1], x[2], x[3]));
 
         output.begin_page(page_num, &media_box, art_box)?;
         p.process_stream(

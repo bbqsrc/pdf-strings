@@ -2408,7 +2408,7 @@ pub const GLYPH_NAMES: [(&str, u16); 4700] = [
     ("ideographiccentrecircle", 0x32a5),
     ("ideographicclose", 0x3006),
     ("ideographiccomma", 0x3001),
-    ("ideographiccommaleft", 0xff64),
+    ("ideographiccommaleft", 0xff32),
     ("ideographiccongratulationparen", 0x3237),
     ("ideographiccorrectcircle", 0x32a3),
     ("ideographicearthparen", 0x322f),

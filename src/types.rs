@@ -5,28 +5,28 @@ use euclid::Transform2D;
 use crate::utils::detect_right_aligned_columns;
 
 pub struct Space;
-pub type Transform = Transform2D<f64, Space, Space>;
+pub type Transform = Transform2D<f32, Space, Space>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MediaBox {
-    pub llx: f64,
-    pub lly: f64,
-    pub urx: f64,
-    pub ury: f64,
+    pub llx: f32,
+    pub lly: f32,
+    pub urx: f32,
+    pub ury: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Point {
-    pub x: f64,
-    pub y: f64,
+    pub x: f32,
+    pub y: f32,
 }
 
 #[derive(Debug, Clone)]
 pub struct BoundingBox {
-    pub t: f64,
-    pub r: f64,
-    pub b: f64,
-    pub l: f64,
+    pub t: f32,
+    pub r: f32,
+    pub b: f32,
+    pub l: f32,
 }
 
 impl BoundingBox {
@@ -73,7 +73,7 @@ impl fmt::Display for BoundingBox {
 pub struct TextSpan {
     pub text: String,
     pub bbox: BoundingBox,
-    pub font_size: f64,
+    pub font_size: f32,
     pub page_num: u32,
 }
 
@@ -81,11 +81,11 @@ impl TextSpan {
     // Standard monospace character width in PDF points.
     // This maps PDF coordinates to a character grid for terminal output.
     // Adjust this constant if the output spacing doesn't match your terminal.
-    pub const MONOSPACE_CHAR_WIDTH_POINTS: f64 = 4.0;
+    pub const MONOSPACE_CHAR_WIDTH_POINTS: f32 = 4.0;
 
     /// Convert a PDF x-coordinate (in points) to a character grid column number.
     /// The grid starts at column 0 for x=0.
-    pub fn x_to_col(x: f64) -> usize {
+    pub fn x_to_col(x: f32) -> usize {
         (x / Self::MONOSPACE_CHAR_WIDTH_POINTS).round() as usize
     }
 
@@ -108,7 +108,7 @@ impl TextSpan {
 
     /// Check if this span belongs to a right-aligned column.
     /// Returns true if the span's right edge is close to any of the detected right-aligned positions.
-    pub fn is_right_aligned(&self, right_aligned_positions: &[f64], threshold: f64) -> bool {
+    pub fn is_right_aligned(&self, right_aligned_positions: &[f32], threshold: f32) -> bool {
         let right_x = self.bbox.r;
         right_aligned_positions
             .iter()
@@ -141,7 +141,7 @@ impl TextOutput {
     /// Convert to a pretty-formatted string using character grid positioning.
     /// This preserves the spatial layout of the PDF, including right-aligned columns.
     pub fn to_string_pretty(&self) -> String {
-        const ALIGNMENT_THRESHOLD: f64 = 16.0;
+        const ALIGNMENT_THRESHOLD: f32 = 16.0;
 
         let right_aligned_positions = detect_right_aligned_columns(&self.lines);
         let mut output = String::new();

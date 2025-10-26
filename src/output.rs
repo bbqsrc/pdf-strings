@@ -3,16 +3,16 @@ use euclid::{Transform2D, vec2};
 use crate::error::OutputError;
 use crate::types::{BoundingBox, MediaBox, TextSpan, Transform};
 
-type ArtBox = (f64, f64, f64, f64);
+type ArtBox = (f32, f32, f32, f32);
 
 pub(crate) struct BoundingBoxOutput {
     flip_ctm: Transform,
-    buf_start_x: f64,
-    buf_start_y: f64,
-    buf_end_x: f64,
-    last_x: f64,
-    last_y: f64,
-    buf_font_size: f64,
+    buf_start_x: f32,
+    buf_start_y: f32,
+    buf_end_x: f32,
+    last_x: f32,
+    last_y: f32,
+    buf_font_size: f32,
     buf_ctm: Transform,
     buf: String,
     first_char: bool,
@@ -22,16 +22,16 @@ pub(crate) struct BoundingBoxOutput {
 
 impl BoundingBoxOutput {
     // Threshold for inserting blank lines when Y-gap is larger than normal line spacing
-    const BLANK_LINE_THRESHOLD_POINTS: f64 = 24.0;
+    const BLANK_LINE_THRESHOLD_POINTS: f32 = 24.0;
 
     // Assumed vertical spacing per line in PDF points
-    const POINTS_PER_LINE: f64 = 10.0;
+    const POINTS_PER_LINE: f32 = 10.0;
 
     // Character spacing thresholds (as ratio of font size)
     // Gap > this ratio will create a new span (flush buffer)
-    const CHAR_FLUSH_THRESHOLD_RATIO: f64 = 1.2;
+    const CHAR_FLUSH_THRESHOLD_RATIO: f32 = 1.2;
     // Gap > this ratio will insert a space within the current span
-    const CHAR_SPACE_THRESHOLD_RATIO: f64 = 0.15;
+    const CHAR_SPACE_THRESHOLD_RATIO: f32 = 0.15;
 
     pub(crate) fn new() -> BoundingBoxOutput {
         BoundingBoxOutput {
@@ -69,7 +69,7 @@ impl BoundingBoxOutput {
 
         let mut lines: Vec<Vec<TextSpan>> = Vec::new();
         let mut current_line: Vec<TextSpan> = Vec::new();
-        let mut last_y: Option<f64> = None;
+        let mut last_y: Option<f32> = None;
         let mut last_page: Option<u32> = None;
 
         for span in self.spans {
@@ -205,9 +205,9 @@ impl BoundingBoxOutput {
     pub(crate) fn output_character(
         &mut self,
         trm: &Transform,
-        width: f64,
-        _spacing: f64,
-        font_size: f64,
+        width: f32,
+        _spacing: f32,
+        font_size: f32,
         char: &str,
     ) -> Result<(), OutputError> {
         let position = trm.post_transform(&self.flip_ctm);

@@ -19,8 +19,8 @@ pub(crate) struct PdfSimpleFont<'a> {
     doc: &'a Document,
     encoding: Option<Vec<u16>>,
     unicode_map: Option<HashMap<u32, String>>,
-    widths: HashMap<CharCode, f64>,
-    missing_width: f64,
+    widths: HashMap<CharCode, f32>,
+    missing_width: f32,
 }
 
 #[derive(Clone)]
@@ -28,7 +28,7 @@ pub(crate) struct PdfType3Font<'a> {
     font: &'a Dictionary,
     encoding: Option<Vec<u16>>,
     unicode_map: Option<HashMap<CharCode, String>>,
-    widths: HashMap<CharCode, f64>,
+    widths: HashMap<CharCode, f32>,
 }
 
 pub(crate) struct PdfCIDFont<'a> {
@@ -40,8 +40,8 @@ pub(crate) struct PdfCIDFont<'a> {
     to_unicode: Option<HashMap<u32, String>>,
     fallback_unicode: Option<HashMap<u32, String>>,
     width_fallback: Option<HashMap<u32, String>>,
-    widths: HashMap<CharCode, f64>,
-    default_width: Option<f64>,
+    widths: HashMap<CharCode, f32>,
+    default_width: Option<f32>,
 }
 
 #[derive(Copy, Clone)]
@@ -63,7 +63,7 @@ impl<'a> Iterator for PdfFontIter<'a> {
 }
 
 pub(crate) trait PdfFont: Debug {
-    fn get_width(&self, id: CharCode) -> f64;
+    fn get_width(&self, id: CharCode) -> f32;
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)>;
     fn decode_char(&self, char: CharCode) -> String;
 }
@@ -359,7 +359,7 @@ impl<'a> PdfSimpleFont<'a> {
         if let (Some(first_char), Some(last_char), Some(widths)) = (
             maybe_get::<i64>(doc, font, b"FirstChar"),
             maybe_get::<i64>(doc, font, b"LastChar"),
-            maybe_get::<Vec<f64>>(doc, font, b"Widths"),
+            maybe_get::<Vec<f32>>(doc, font, b"Widths"),
         ) {
             let mut i: i64 = 0;
             debug!(
@@ -388,7 +388,7 @@ impl<'a> PdfSimpleFont<'a> {
                                 .unwrap();
                             for i in 0..encoding.len() {
                                 if encoding[i] == c {
-                                    width_map.insert(i as CharCode, w.1 as f64);
+                                    width_map.insert(i as CharCode, w.1 as f32);
                                 }
                             }
                         }
@@ -415,7 +415,7 @@ impl<'a> PdfSimpleFont<'a> {
 
                         let encoding = &table[..];
                         for w in font_metrics.2 {
-                            width_map.insert(w.0 as CharCode, w.1 as f64);
+                            width_map.insert(w.0 as CharCode, w.1 as f32);
                         }
                         encoding_table = Some(encoding.to_vec());
                     }
@@ -423,7 +423,7 @@ impl<'a> PdfSimpleFont<'a> {
             }
         }
 
-        let missing_width = get::<Option<f64>>(doc, font, b"MissingWidth").unwrap_or(0.);
+        let missing_width = get::<Option<f32>>(doc, font, b"MissingWidth").unwrap_or(0.);
         PdfSimpleFont {
             doc,
             font,
@@ -468,7 +468,7 @@ impl<'a> PdfSimpleFont<'a> {
 }
 
 impl<'a> PdfFont for PdfSimpleFont<'a> {
-    fn get_width(&self, id: CharCode) -> f64 {
+    fn get_width(&self, id: CharCode) -> f32 {
         let width = self.widths.get(&id);
         if let Some(width) = width {
             return *width;
@@ -593,7 +593,7 @@ impl<'a> PdfType3Font<'a> {
 
         let first_char: i64 = get(doc, font, b"FirstChar");
         let last_char: i64 = get(doc, font, b"LastChar");
-        let widths: Vec<f64> = get(doc, font, b"Widths");
+        let widths: Vec<f32> = get(doc, font, b"Widths");
 
         let mut width_map = HashMap::new();
 
@@ -621,7 +621,7 @@ impl<'a> PdfType3Font<'a> {
 }
 
 impl<'a> PdfFont for PdfType3Font<'a> {
-    fn get_width(&self, id: CharCode) -> f64 {
+    fn get_width(&self, id: CharCode) -> f32 {
         let width = self.widths.get(&id);
         if let Some(width) = width {
             return *width;
@@ -915,7 +915,7 @@ fn get_fallback_unicode_from_font<'a>(
 
 fn get_width_fallback_from_system_font(
     font: &Dictionary,
-    pdf_widths: &HashMap<u32, f64>,
+    pdf_widths: &HashMap<u32, f32>,
 ) -> Option<HashMap<u32, String>> {
     let base_name = if let Ok(Object::Name(name)) = font.get(b"BaseFont") {
         pdf_to_utf8(name)
@@ -960,7 +960,7 @@ fn get_width_fallback_from_system_font(
     );
 
     let mut fallback_map = HashMap::new();
-    const WIDTH_TOLERANCE_PERCENT: f64 = 2.0;
+    const WIDTH_TOLERANCE_PERCENT: f32 = 2.0;
 
     for (&cid, &pdf_width) in pdf_widths.iter() {
         let pdf_width_int = pdf_width as i32;
@@ -1143,13 +1143,13 @@ impl<'a> PdfCIDFont<'a> {
             fallback_unicode,
             width_fallback,
             encoding,
-            default_width: Some(default_width as f64),
+            default_width: Some(default_width as f32),
         }
     }
 }
 
 impl<'a> PdfFont for PdfCIDFont<'a> {
-    fn get_width(&self, id: CharCode) -> f64 {
+    fn get_width(&self, id: CharCode) -> f32 {
         let width = self.widths.get(&id);
         if let Some(width) = width {
             debug!("GetWidth {} -> {}", id, *width);

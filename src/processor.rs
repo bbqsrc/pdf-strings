@@ -16,12 +16,12 @@ use crate::utils::*;
 #[derive(Clone)]
 pub(crate) struct TextState<'a> {
     pub(crate) font: Option<Rc<dyn PdfFont + 'a>>,
-    pub(crate) font_size: f64,
-    pub(crate) character_spacing: f64,
-    pub(crate) word_spacing: f64,
-    pub(crate) horizontal_scaling: f64,
-    pub(crate) leading: f64,
-    pub(crate) rise: f64,
+    pub(crate) font_size: f32,
+    pub(crate) character_spacing: f32,
+    pub(crate) word_spacing: f32,
+    pub(crate) horizontal_scaling: f32,
+    pub(crate) leading: f32,
+    pub(crate) rise: f32,
     pub(crate) tm: Transform,
 }
 
@@ -30,7 +30,7 @@ pub(crate) struct GraphicsState<'a> {
     pub(crate) ctm: Transform,
     pub(crate) ts: TextState<'a>,
     pub(crate) smask: Option<Dictionary>,
-    pub(crate) line_width: f64,
+    pub(crate) line_width: f32,
 }
 
 fn show_text(
@@ -140,7 +140,7 @@ impl<'a> Processor<'a> {
         let mut gs: GraphicsState = GraphicsState {
             ts: TextState {
                 font: None,
-                font_size: std::f64::NAN,
+                font_size: std::f32::NAN,
                 character_spacing: 0.,
                 word_spacing: 0.,
                 horizontal_scaling: 100. / 100.,
@@ -190,7 +190,7 @@ impl<'a> Processor<'a> {
                                 &Object::Integer(i) => {
                                     let ts = &mut gs.ts;
                                     let w0 = 0.;
-                                    let tj = i as f64;
+                                    let tj = i as f32;
                                     let ty = 0.;
                                     let tx =
                                         ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size);
@@ -202,7 +202,7 @@ impl<'a> Processor<'a> {
                                 &Object::Real(i) => {
                                     let ts = &mut gs.ts;
                                     let w0 = 0.;
-                                    let tj = i as f64;
+                                    let tj = i as f32;
                                     let ty = 0.;
                                     let tx =
                                         ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size);
