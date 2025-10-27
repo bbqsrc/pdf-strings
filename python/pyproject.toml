@@ -1,0 +1,41 @@
+[project]
+name = "pdf-strings"
+version = "0.1.0"
+description = "Extract text from PDFs with position data"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+authors = [
+    {name = "Brendan Molloy", email = "brendan@bbqsrc.net"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+]
+
+[build-system]
+requires = ["hatchling", "packaging"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "pdf_strings/",
+    "hatch_build.py",
+    "../ffi/",
+    "../src/",
+    "../Cargo.toml",
+    "../Cargo.lock",
+]
+pure-python = false
+
+[tool.hatch.build.targets.wheel]
+packages = ["pdf_strings"]
+artifacts = ["pdf_strings/*.so", "pdf_strings/*.dylib", "pdf_strings/*.dll"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"

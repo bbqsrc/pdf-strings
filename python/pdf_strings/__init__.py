@@ -22,13 +22,23 @@ from typing import List, Optional
 from dataclasses import dataclass
 
 # Locate the shared library
-_lib_path = Path(__file__).parent.parent.parent / "target" / "release"
+# First check if it's in the package directory (installed wheel)
+# Then fall back to the dev path (editable install/development)
+_package_dir = Path(__file__).parent
+_dev_lib_path = _package_dir.parent.parent / "target" / "release"
+
 if sys.platform == "darwin":
-    _lib_file = _lib_path / "libpdf_strings_ffi.dylib"
+    _lib_name = "libpdf_strings_ffi.dylib"
 elif sys.platform == "win32":
-    _lib_file = _lib_path / "pdf_strings_ffi.dll"
+    _lib_name = "pdf_strings_ffi.dll"
 else:
-    _lib_file = _lib_path / "libpdf_strings_ffi.so"
+    _lib_name = "libpdf_strings_ffi.so"
+
+# Try package directory first (installed)
+_lib_file = _package_dir / _lib_name
+if not _lib_file.exists():
+    # Fall back to dev path
+    _lib_file = _dev_lib_path / _lib_name
 
 _lib = ctypes.CDLL(str(_lib_file))
 
