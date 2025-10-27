@@ -1,6 +1,6 @@
 [project]
 name = "pdf-strings"
-version = "0.1.0"
+version = "0.1.1"
 description = "Extract text from PDFs with position data"
 readme = "README.md"
 requires-python = ">=3.11"
