@@ -56,9 +56,11 @@ class CustomBuildHook(BuildHookInterface):
 
         # Build a reasonable platform tag
         if sys.platform == "darwin":
-            # macOS: use 10_12 as minimum (Rust's minimum)
-            machine = plat.machine()
-            platform_tag = f"macosx_10_12_{machine}"
+            machine = plat.machine().lower()
+            # ARM64 Macs only exist from macOS 11.0 (Big Sur) onwards
+            # x86_64 Macs can use 10.12 as minimum
+            min_macos = "11_0" if machine == "arm64" else "10_12"
+            platform_tag = f"macosx_{min_macos}_{machine}"
         elif sys.platform == "win32":
             machine = plat.machine().lower()
             platform_tag = f"win_{machine}"
