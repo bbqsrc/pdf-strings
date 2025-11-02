@@ -12,6 +12,7 @@ pub(crate) struct BoundingBoxOutput {
     buf_end_x: f32,
     last_x: f32,
     last_y: f32,
+    buf_font_name: String,
     buf_font_size: f32,
     buf_ctm: Transform,
     buf: String,
@@ -41,6 +42,7 @@ impl BoundingBoxOutput {
             buf_end_x: 0.,
             last_x: 0.,
             last_y: 0.,
+            buf_font_name: String::new(),
             buf_font_size: 0.,
             buf_ctm: Transform2D::identity(),
             buf: String::new(),
@@ -59,11 +61,7 @@ impl BoundingBoxOutput {
         // This ensures pages don't get mixed together
         self.spans
             .sort_by(|a, b| match a.page_num.cmp(&b.page_num) {
-                std::cmp::Ordering::Equal => a
-                    .bbox
-                    .t
-                    .partial_cmp(&b.bbox.t)
-                    .unwrap_or(std::cmp::Ordering::Equal),
+                std::cmp::Ordering::Equal => a.bbox.t.total_cmp(&b.bbox.t),
                 other => other,
             });
 
@@ -82,12 +80,7 @@ impl BoundingBoxOutput {
                 if span_page != prev_page {
                     // Flush current line
                     if !current_line.is_empty() {
-                        current_line.sort_by(|a, b| {
-                            a.bbox
-                                .l
-                                .partial_cmp(&b.bbox.l)
-                                .unwrap_or(std::cmp::Ordering::Equal)
-                        });
+                        current_line.sort_by(|a, b| a.bbox.l.total_cmp(&b.bbox.l));
                         lines.push(current_line);
                         current_line = Vec::new();
                     }
@@ -107,12 +100,7 @@ impl BoundingBoxOutput {
                     // Start a new line
                     if !current_line.is_empty() {
                         // Sort spans in the line by X coordinate (left to right)
-                        current_line.sort_by(|a, b| {
-                            a.bbox
-                                .l
-                                .partial_cmp(&b.bbox.l)
-                                .unwrap_or(std::cmp::Ordering::Equal)
-                        });
+                        current_line.sort_by(|a, b| a.bbox.l.total_cmp(&b.bbox.l));
                         lines.push(current_line);
                         current_line = Vec::new();
                     }
@@ -137,12 +125,7 @@ impl BoundingBoxOutput {
 
         if !current_line.is_empty() {
             // Sort the last line
-            current_line.sort_by(|a, b| {
-                a.bbox
-                    .l
-                    .partial_cmp(&b.bbox.l)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            current_line.sort_by(|a, b| a.bbox.l.total_cmp(&b.bbox.l));
             lines.push(current_line);
         }
 
@@ -177,6 +160,7 @@ impl BoundingBoxOutput {
             self.spans.push(TextSpan {
                 text: self.buf.clone(),
                 bbox,
+                font_name: self.buf_font_name.clone(),
                 font_size: self.buf_font_size,
                 page_num: self.current_page,
             });
@@ -207,6 +191,7 @@ impl BoundingBoxOutput {
         trm: &Transform,
         width: f32,
         _spacing: f32,
+        font_name: &str,
         font_size: f32,
         char: &str,
     ) -> Result<(), OutputError> {
@@ -222,6 +207,7 @@ impl BoundingBoxOutput {
             // First character of a new span (either very first, or after flush)
             self.buf_start_x = x;
             self.buf_start_y = y;
+            self.buf_font_name = font_name.to_owned();
             self.buf_font_size = font_size;
             self.buf_ctm = *trm;
             self.buf = normalized_char.to_owned();
@@ -244,7 +230,9 @@ impl BoundingBoxOutput {
             let gap_ratio = gap / transformed_font_size;
 
             let y_gap = (y - self.last_y).abs();
-            let should_flush = y_gap > transformed_font_size * 1.5
+            let font_changed = font_name != self.buf_font_name || font_size != self.buf_font_size;
+            let should_flush = font_changed
+                || y_gap > transformed_font_size * 1.5
                 || (x < self.buf_end_x && y_gap > transformed_font_size * 0.5)
                 || (gap_ratio.abs() > Self::CHAR_FLUSH_THRESHOLD_RATIO);
 
@@ -252,6 +240,7 @@ impl BoundingBoxOutput {
                 self.flush_string()?;
                 self.buf_start_x = x;
                 self.buf_start_y = y;
+                self.buf_font_name = font_name.to_owned();
                 self.buf_font_size = font_size;
                 self.buf_ctm = *trm;
                 self.buf = normalized_char.to_owned();

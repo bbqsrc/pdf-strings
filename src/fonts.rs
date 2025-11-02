@@ -17,6 +17,7 @@ pub(crate) type CharCode = u32;
 pub(crate) struct PdfSimpleFont<'a> {
     font: &'a Dictionary,
     doc: &'a Document,
+    base_name: String,
     encoding: Option<Vec<u16>>,
     unicode_map: Option<HashMap<u32, String>>,
     widths: HashMap<CharCode, f32>,
@@ -26,6 +27,7 @@ pub(crate) struct PdfSimpleFont<'a> {
 #[derive(Clone)]
 pub(crate) struct PdfType3Font<'a> {
     font: &'a Dictionary,
+    base_name: String,
     encoding: Option<Vec<u16>>,
     unicode_map: Option<HashMap<CharCode, String>>,
     widths: HashMap<CharCode, f32>,
@@ -35,6 +37,7 @@ pub(crate) struct PdfCIDFont<'a> {
     font: &'a Dictionary,
     #[allow(dead_code)]
     doc: &'a Document,
+    base_name: String,
     #[allow(dead_code)]
     encoding: ByteMapping,
     to_unicode: Option<HashMap<u32, String>>,
@@ -66,6 +69,7 @@ pub(crate) trait PdfFont: Debug {
     fn get_width(&self, id: CharCode) -> f32;
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)>;
     fn decode_char(&self, char: CharCode) -> String;
+    fn get_font_name(&self) -> &str;
 }
 
 impl<'a> dyn PdfFont + 'a {
@@ -132,7 +136,7 @@ impl<'a> PdfSimpleFont<'a> {
         );
         let descriptor: Option<&Dictionary> = get(doc, font, b"FontDescriptor");
         let mut type1_encoding = None;
-        let mut unicode_map = None;
+        let mut unicode_map: Option<HashMap<u32, String>> = None;
         if let Some(descriptor) = descriptor {
             debug!("descriptor {:?}", descriptor);
             if subtype == "Type1" {
@@ -166,30 +170,12 @@ impl<'a> PdfSimpleFont<'a> {
                     debug!("font file {}, {:?}", subtype, s);
                     let s = get_contents(s);
                     if subtype == "Type1C" {
-                        let table = cff_parser::Table::parse(&s).unwrap();
-                        let charset = table.charset.get_table();
-                        let encoding = table.encoding.get_table();
-                        let mut mapping = HashMap::new();
-                        for i in 0..encoding.len().min(charset.len()) {
-                            let cid = encoding[i];
-                            let sid = charset[i];
-                            let name = cff_parser::string_by_id(&table, sid).unwrap();
-                            let unicode = GLYPH_NAMES
-                                .binary_search_by_key(&name, |&(n, _)| n)
-                                .ok()
-                                .map(|i| GLYPH_NAMES[i].1)
-                                .or_else(|| {
-                                    ZAPF_DINGBATS_NAMES
-                                        .binary_search_by_key(&name, |&(n, _)| n)
-                                        .ok()
-                                        .map(|i| ZAPF_DINGBATS_NAMES[i].1)
-                                });
-                            if let Some(unicode) = unicode {
-                                let str = String::from_utf16(&[unicode]).unwrap();
-                                mapping.insert(cid as u32, str);
-                            }
-                        }
-                        unicode_map = Some(mapping);
+                        debug!(
+                            "Parsing Type1C font - will use PDF-level encoding instead of CFF encoding"
+                        );
+                        // For Type1C fonts, we don't extract the CFF encoding table
+                        // Instead, we'll use the PDF-level encoding (MacRomanEncoding, etc.)
+                        // combined with the font's glyph names
                     }
                 }
                 None => {}
@@ -214,10 +200,19 @@ impl<'a> PdfSimpleFont<'a> {
         };
 
         let mut encoding_table = None;
+
+        // Use PDF-level encoding (MacRomanEncoding, etc.)
         match encoding {
             Some(&Object::Name(ref encoding_name)) => {
                 debug!("encoding {:?}", pdf_to_utf8(encoding_name));
                 encoding_table = Some(encoding_to_unicode_table(encoding_name));
+            }
+            _ => {}
+        }
+
+        match encoding {
+            Some(&Object::Name(_)) if encoding_table.is_some() => {
+                // Already handled above
             }
             Some(&Object::Dictionary(ref encoding)) => {
                 let mut table =
@@ -427,6 +422,7 @@ impl<'a> PdfSimpleFont<'a> {
         PdfSimpleFont {
             doc,
             font,
+            base_name,
             widths: width_map,
             encoding: encoding_table,
             missing_width,
@@ -520,6 +516,9 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
         let s = to_utf8(encoding, &slice);
         s
     }
+    fn get_font_name(&self) -> &str {
+        &self.base_name
+    }
 }
 
 impl<'a> fmt::Debug for PdfSimpleFont<'a> {
@@ -530,6 +529,7 @@ impl<'a> fmt::Debug for PdfSimpleFont<'a> {
 
 impl<'a> PdfType3Font<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfType3Font<'a> {
+        let base_name = get_name_string(doc, font, b"BaseFont");
         let unicode_map = get_unicode_map(doc, font);
         let encoding: Option<&Object> = get(doc, font, b"Encoding");
 
@@ -613,6 +613,7 @@ impl<'a> PdfType3Font<'a> {
         assert_eq!(first_char + i - 1, last_char);
         PdfType3Font {
             font,
+            base_name,
             widths: width_map,
             encoding: encoding_table,
             unicode_map,
@@ -663,6 +664,9 @@ impl<'a> PdfFont for PdfType3Font<'a> {
             .unwrap_or(&PDFDocEncoding);
         let s = to_utf8(encoding, &slice);
         s
+    }
+    fn get_font_name(&self) -> &str {
+        &self.base_name
     }
 }
 
@@ -1138,6 +1142,7 @@ impl<'a> PdfCIDFont<'a> {
         PdfCIDFont {
             doc,
             font,
+            base_name,
             widths,
             to_unicode: unicode_map,
             fallback_unicode,
@@ -1213,6 +1218,9 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
 
         debug!("Unknown character {} (no mapping found)", char);
         "".to_string()
+    }
+    fn get_font_name(&self) -> &str {
+        &self.base_name
     }
 }
 

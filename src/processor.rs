@@ -65,7 +65,14 @@ fn show_text(
             spacing += ts.word_spacing
         }
 
-        output.output_character(&trm, w0, spacing, ts.font_size, &font.decode_char(c))?;
+        output.output_character(
+            &trm,
+            w0,
+            spacing,
+            font.get_font_name(),
+            ts.font_size,
+            &font.decode_char(c),
+        )?;
         let tj = 0.;
         let ty = 0.;
         let tx = ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size + spacing);
@@ -133,7 +140,16 @@ impl<'a> Processor<'a> {
         output: &mut BoundingBoxOutput,
         page_num: u32,
     ) -> Result<(), OutputError> {
-        let content = Content::decode(&content).unwrap();
+        let content = match Content::decode(&content) {
+            Ok(content) => content,
+            Err(e) => {
+                warn!(
+                    "Failed to decode content stream for page {}: {}. Skipping this content.",
+                    page_num, e
+                );
+                return Ok(());
+            }
+        };
         let mut font_table = HashMap::new();
         let mut gs: GraphicsState = GraphicsState {
             ts: TextState {

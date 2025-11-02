@@ -73,6 +73,7 @@ impl fmt::Display for BoundingBox {
 pub struct TextSpan {
     pub text: String,
     pub bbox: BoundingBox,
+    pub font_name: String,
     pub font_size: f32,
     pub page_num: u32,
 }
