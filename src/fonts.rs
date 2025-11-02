@@ -237,7 +237,20 @@ impl<'a> PdfSimpleFont<'a> {
                                 let unicode = GLYPH_NAMES
                                     .binary_search_by_key(&name.as_str(), |&(n, _)| n)
                                     .ok()
-                                    .map(|i| GLYPH_NAMES[i].1);
+                                    .map(|i| GLYPH_NAMES[i].1)
+                                    .or_else(|| {
+                                        // Handle C<number> naming convention (e.g., C118 → char 118 → 'v')
+                                        if name.starts_with('C') {
+                                            name[1..]
+                                                .parse::<u32>()
+                                                .ok()
+                                                .filter(|&cp| cp <= 0x10FFFF)
+                                                .and_then(|cp| char::from_u32(cp))
+                                                .map(|ch| ch as u16)
+                                        } else {
+                                            None
+                                        }
+                                    });
                                 if let Some(unicode) = unicode {
                                     table[code as usize] = unicode;
                                     if let Some(ref mut unicode_map) = unicode_map {
