@@ -240,7 +240,7 @@ impl<'a> PdfSimpleFont<'a> {
                                     .map(|i| GLYPH_NAMES[i].1)
                                     .or_else(|| {
                                         // Handle C<number> naming convention (e.g., C118 → char 118 → 'v')
-                                        if name.starts_with('C') {
+                                        if name.len() > 1 && name.starts_with('C') {
                                             name[1..]
                                                 .parse::<u32>()
                                                 .ok()
@@ -542,7 +542,9 @@ impl<'a> fmt::Debug for PdfSimpleFont<'a> {
 
 impl<'a> PdfType3Font<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfType3Font<'a> {
-        let base_name = get_name_string(doc, font, b"BaseFont");
+        let base_name = maybe_get_name_string(doc, font, b"Name")
+            .or_else(|| maybe_get_name_string(doc, font, b"BaseFont"))
+            .unwrap_or_else(|| "Unknown-Type3".to_string());
         let unicode_map = get_unicode_map(doc, font);
         let encoding: Option<&Object> = get(doc, font, b"Encoding");
 
