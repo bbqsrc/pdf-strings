@@ -5,6 +5,7 @@ pub enum OutputError {
     FormatError(std::fmt::Error),
     IoError(std::io::Error),
     PdfError(lopdf::Error),
+    Other(String),
 }
 
 impl std::fmt::Display for OutputError {
@@ -13,6 +14,7 @@ impl std::fmt::Display for OutputError {
             OutputError::FormatError(e) => write!(f, "Formating error: {}", e),
             OutputError::IoError(e) => write!(f, "IO error: {}", e),
             OutputError::PdfError(e) => write!(f, "PDF error: {}", e),
+            OutputError::Other(s) => write!(f, "{}", s),
         }
     }
 }

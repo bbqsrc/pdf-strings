@@ -150,19 +150,45 @@ impl PdfExtractor {
     }
 }
 
-/// Extract text from a PDF file at the given path using default settings.
-///
-/// This is a convenience function equivalent to `PdfExtractor::default().from_path(path)`.
-///
-/// # Examples
-///
-/// ```no_run
-/// let output = pdf_extract::from_path("file.pdf")?;
-/// println!("{}", output);
-/// # Ok::<(), pdf_extract::OutputError>(())
-/// ```
+/// Extract text from a document at the given path. Dispatches by file
+/// extension: `.ps` is parsed as dvips-emitted PostScript; everything
+/// else is parsed as PDF.
 pub fn from_path<P: AsRef<Path>>(path: P) -> Result<TextOutput, OutputError> {
-    PdfExtractor::default().from_path(path)
+    let path_ref = path.as_ref();
+    let is_ps = path_ref
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("ps"))
+        .unwrap_or(false);
+    if is_ps {
+        from_ps_path(path_ref)
+    } else {
+        PdfExtractor::default().from_path(path_ref)
+    }
+}
+
+/// Extract text from a dvips-emitted PostScript file at the given path.
+///
+/// Unlike the PDF path, this does not perform OCR — the PostScript
+/// content carries authoritative glyph codes under the TeX OT1 encoding
+/// which are mapped directly to Unicode. Non-dvips PostScript is
+/// rejected with an error.
+pub fn from_ps_path<P: AsRef<Path>>(path: P) -> Result<TextOutput, OutputError> {
+    let bytes = std::fs::read(path)?;
+    from_ps_bytes(&bytes)
+}
+
+/// Extract text from dvips-emitted PostScript in memory.
+pub fn from_ps_bytes(bytes: &[u8]) -> Result<TextOutput, OutputError> {
+    let lines = crate::ps::extract_lines(bytes)?;
+    Ok(TextOutput::from(lines))
+}
+
+/// Extract text from dvips-emitted PostScript via a reader.
+pub fn from_ps_reader<R: Read>(mut reader: R) -> Result<TextOutput, OutputError> {
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes)?;
+    from_ps_bytes(&bytes)
 }
 
 /// Extract text from a PDF in memory using default settings.
