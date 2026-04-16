@@ -560,6 +560,7 @@ impl<'a> PdfType3Font<'a> {
         let encoding_table;
         let mut synthetic_name_count: usize = 0;
         let mut total_name_count: usize = 0;
+        let mut code_to_name: HashMap<CharCode, String> = HashMap::new();
         match encoding {
             Some(&Object::Name(ref encoding_name)) => {
                 debug!("encoding {:?}", pdf_to_utf8(encoding_name));
@@ -588,6 +589,7 @@ impl<'a> PdfType3Font<'a> {
                                 if is_dvips_synthetic_name(&name) {
                                     synthetic_name_count += 1;
                                 }
+                                code_to_name.insert(code as CharCode, name.clone());
                                 let unicode = GLYPH_NAMES
                                     .binary_search_by_key(&name.as_str(), |&(n, _)| n)
                                     .ok()
@@ -624,11 +626,26 @@ impl<'a> PdfType3Font<'a> {
         let is_dvips_synthetic = total_name_count > 0
             && synthetic_name_count == total_name_count
             && unicode_map.is_none();
+
+        // Recover Unicode for dvips-synthetic fonts by shape-matching each
+        // CharProc bitmap against the embedded reference glyphs. Any glyph
+        // that doesn't match confidently will be decoded as U+FFFD in
+        // `decode_char`.
+        let mut recovered_unicode: HashMap<CharCode, String> = HashMap::new();
         if is_dvips_synthetic {
+            let bitmaps = crate::type3_bitmap::extract_bitmaps(doc, font, &code_to_name);
+            let mut matched = 0usize;
+            for (code, bm) in &bitmaps {
+                if let Some(s) = crate::type3_matcher::match_bitmap(bm) {
+                    recovered_unicode.insert(*code, s);
+                    matched += 1;
+                }
+            }
             debug!(
-                "Type3 font {} uses dvips-synthetic /a<N> glyph names and has no ToUnicode; \
-                 Unicode will be recovered via CharProc bitmap matching",
-                base_name
+                "Type3 font {}: dvips-synthetic, recovered {}/{} glyphs via shape match",
+                base_name,
+                matched,
+                bitmaps.len()
             );
         }
 
@@ -660,7 +677,7 @@ impl<'a> PdfType3Font<'a> {
             encoding: encoding_table,
             unicode_map,
             is_dvips_synthetic,
-            recovered_unicode: HashMap::new(),
+            recovered_unicode,
         }
     }
 }
@@ -709,6 +726,14 @@ impl<'a> PdfFont for PdfType3Font<'a> {
                 Some(s) => s.clone(),
             };
             return s;
+        }
+        if self.is_dvips_synthetic {
+            // dvips /a<N> names never map to meaningful PDFDocEncoding; use
+            // recovered Unicode or emit REPLACEMENT CHARACTER.
+            return match self.recovered_unicode.get(&char) {
+                Some(s) => s.clone(),
+                None => "\u{FFFD}".to_string(),
+            };
         }
         let encoding = self
             .encoding

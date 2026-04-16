@@ -10,6 +10,7 @@ mod fonts;
 mod output;
 mod processor;
 mod type3_bitmap;
+mod type3_matcher;
 mod types;
 mod utils;
 
