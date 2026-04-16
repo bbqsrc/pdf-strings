@@ -164,25 +164,30 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
                 // strings don't count as numbers; leave last_numbers alone
             }
             Token::Word(w) if is_show_op(w) => {
-                // Drain pending string into current font. If the previous
-                // operator's kern exceeds the word-space threshold, insert
-                // a synthetic space before this emission.
+                // Drain pending string into current font. Merge into the
+                // previous span on the line when the prior kern falls in
+                // the letter-kerning band (< WORD_SPACE_KERN); otherwise
+                // start a fresh TextSpan. TextOutput::Display puts one
+                // space between adjacent spans on a line, so a merged
+                // word renders with no internal space and a word boundary
+                // gets exactly one space.
                 if let (Some(bytes), Some(fname)) =
                     (pending_string.take(), current_font.as_deref())
                 {
-                    let prepend_space = prev_kern >= WORD_SPACE_KERN;
+                    let merge =
+                        prev_kern < WORD_SPACE_KERN && last_span_can_merge(&current_line, fname);
                     emit_string(
                         &bytes,
                         fname,
                         last_x,
                         last_y,
                         page_num,
-                        prepend_space,
+                        merge,
                         &mut current_line,
                     );
                 }
                 // Compute this op's kern (applied AFTER the show) so the
-                // next iteration can decide on word-space insertion.
+                // next iteration can decide on word-boundary vs merge.
                 let arg = last_numbers.last().copied().unwrap_or(0.0) as f32;
                 prev_kern = kern_for_op(w, arg);
 
@@ -274,23 +279,38 @@ fn kern_for_op(w: &str, arg: f32) -> f32 {
     }
 }
 
+/// Whether the last span on the current line can have more characters
+/// appended — i.e. it exists and uses the same font.
+fn last_span_can_merge(line: &[TextSpan], font: &str) -> bool {
+    line.last().is_some_and(|s| s.font_name == font)
+}
+
 fn emit_string(
     bytes: &[u8],
     font: &str,
     x: f32,
     y: f32,
     page_num: u32,
-    prepend_space: bool,
+    merge: bool,
     line: &mut Vec<TextSpan>,
 ) {
     let mut text = String::new();
-    if prepend_space {
-        text.push(' ');
-    }
     for &b in bytes {
         text.push_str(ot1_to_unicode(b));
     }
     if text.is_empty() {
+        return;
+    }
+    if merge {
+        // Append to the trailing span; widen its right edge to cover
+        // the appended content. Safe by precondition (caller only sets
+        // merge=true when last_span_can_merge returned true).
+        let last = line
+            .last_mut()
+            .expect("merge only set when last span exists");
+        let extra_width = text.chars().count() as f32 * 17.5;
+        last.bbox.r += extra_width;
+        last.text.push_str(&text);
         return;
     }
     let char_count = text.chars().count() as f32;
@@ -391,13 +411,16 @@ mod tests {
         };
         let lines = extract_lines(&bytes).unwrap();
         let total_lines: usize = lines.len();
-        // Spans within a line are joined without separators — dvips
-        // emits kerning-split words (Fx(W)-6 b(alther)) as multiple
-        // spans on the same line, and separating them with spaces
-        // would break word-level substring matching.
+        // Spans on one line are joined with a single space, matching
+        // TextOutput::Display — which is what the CLI actually emits.
+        // Word-level merging in the extractor keeps each TextSpan
+        // equal to a word or phrase, so this produces natural prose.
         let mut all_text = String::new();
         for line in &lines {
-            for span in line {
+            for (i, span) in line.iter().enumerate() {
+                if i > 0 {
+                    all_text.push(' ');
+                }
                 all_text.push_str(&span.text);
             }
             all_text.push('\n');
@@ -427,14 +450,12 @@ mod tests {
         eprintln!();
 
         // Substring presence — presence-only, no extracted text bodies.
-        // Includes at least one word-space to verify kern-based space
-        // insertion (without requiring the phrase to survive line wraps
-        // — "primitive recursion" in the source is wrapped across a
-        // line break and so legitimately won't be contiguous).
+        // Includes multi-word phrases to verify both intra-word merging
+        // and inter-word spacing work together.
         let substrings: &[&str] = &[
             "Walther Recursion",
+            "David McAllester",
             "Introduction",
-            "McAllester",
             "termination",
         ];
         eprint!("  substrings:");
@@ -462,6 +483,38 @@ mod tests {
                 s
             );
         }
+    }
+
+    #[test]
+    fn merges_letter_kerned_spans() {
+        // (W) -6 b (alther) — kern -6 is letter-level, so the two
+        // emissions should merge into one TextSpan "Walther".
+        let src = b"\
+%!PS-Adobe-2.0
+%%Creator: dvips 5.497
+/Fa 1 128 df<00>97 D E
+1 0 bop 100 200 a Fa(W)-6 b(alther) p eop
+";
+        let out = extract_lines(src).unwrap();
+        assert_eq!(out[0].len(), 1);
+        assert_eq!(out[0][0].text, "Walther");
+    }
+
+    #[test]
+    fn splits_on_word_space_kern() {
+        // (alther) 22 b (Recursion) — kern 22 is word-space sized, so
+        // the two emissions should stay as distinct TextSpans. Display
+        // will separate them with a single space.
+        let src = b"\
+%!PS-Adobe-2.0
+%%Creator: dvips 5.497
+/Fa 1 128 df<00>97 D E
+1 0 bop 100 200 a Fa(alther)22 b(Recursion) p eop
+";
+        let out = extract_lines(src).unwrap();
+        assert_eq!(out[0].len(), 2);
+        assert_eq!(out[0][0].text, "alther");
+        assert_eq!(out[0][1].text, "Recursion");
     }
 
     #[test]
