@@ -1,6 +1,5 @@
 target
 .idea/*
-Cargo.lock
 /*.pdf
 /*.txt
 __pycache__
