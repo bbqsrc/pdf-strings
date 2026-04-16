@@ -128,11 +128,16 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
     // Paragraph line-spacing at 10pt is ~12pt = 50 units; use 15 as a
     // conservative break threshold.
     const LINE_BREAK_Y: f32 = 15.0;
-    // Word-space kerns in dvips CM-based output sit around 20-30 units
-    // (a 10pt space glyph is ~3.3pt = 14 units; dvips adds interword
-    // stretch). Letter kerning stays under 10 units. 12 is the valley
-    // between them.
-    const WORD_SPACE_KERN: f32 = 12.0;
+    // Word-space kerns in dvips CM-based output: natural 14 units (CMR10
+    // space at 300dpi), shrinkable to ~10 in tight justification,
+    // stretchable to 20+. CMR letter-kern pairs are overwhelmingly
+    // negative (tightening, e.g. "AV" = -18) or at most +3. Setting the
+    // threshold at 6 cleanly separates: letter kerns (-20..+3) merge
+    // into the preceding span; word-space kerns (10..20+) start a new
+    // span. The rare positive letter kerns (3-5 units) get merged too;
+    // intra-word letter kerns from l-t (always -4..+4) cannot trigger
+    // a split.
+    const WORD_SPACE_KERN: f32 = 6.0;
 
     loop {
         let Some(tk) = tok.next() else { break };
