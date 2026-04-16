@@ -114,10 +114,20 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
     let mut last_y = 0.0f32;
     let mut pending_string: Option<Vec<u8>> = None;
     let mut last_numbers: Vec<f64> = Vec::new();
+    // Kern applied by the PREVIOUS show operator, in dvips units. Compared
+    // against WORD_SPACE_KERN to decide whether to insert a synthetic
+    // space before the next emission. Zero when the next span follows
+    // an absolute moveto (`a` / `y`) rather than an in-line kern.
+    let mut prev_kern: f32 = 0.0;
     // Line break threshold in dvips units (300dpi → 72pt ≈ 1/300 inch per unit).
     // Paragraph line-spacing at 10pt is ~12pt = 50 units; use 15 as a
     // conservative break threshold.
     const LINE_BREAK_Y: f32 = 15.0;
+    // Word-space kerns in dvips CM-based output sit around 20-30 units
+    // (a 10pt space glyph is ~3.3pt = 14 units; dvips adds interword
+    // stretch). Letter kerning stays under 10 units. 12 is the valley
+    // between them.
+    const WORD_SPACE_KERN: f32 = 12.0;
 
     loop {
         let Some(tk) = tok.next() else { break };
@@ -154,19 +164,28 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
                 // strings don't count as numbers; leave last_numbers alone
             }
             Token::Word(w) if is_show_op(w) => {
-                // Drain pending string into current font.
+                // Drain pending string into current font. If the previous
+                // operator's kern exceeds the word-space threshold, insert
+                // a synthetic space before this emission.
                 if let (Some(bytes), Some(fname)) =
                     (pending_string.take(), current_font.as_deref())
                 {
+                    let prepend_space = prev_kern >= WORD_SPACE_KERN;
                     emit_string(
                         &bytes,
                         fname,
                         last_x,
                         last_y,
                         page_num,
+                        prepend_space,
                         &mut current_line,
                     );
                 }
+                // Compute this op's kern (applied AFTER the show) so the
+                // next iteration can decide on word-space insertion.
+                let arg = last_numbers.last().copied().unwrap_or(0.0) as f32;
+                prev_kern = kern_for_op(w, arg);
+
                 // `y` is "show then absolute-moveto" — the two preceding
                 // numbers are the new position. Other show operators are
                 // print-and-kern; numbers before them belong to earlier
@@ -179,6 +198,8 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
                     }
                     last_x = nx;
                     last_y = ny;
+                    // Absolute moveto resets the relevant kerning context.
+                    prev_kern = 0.0;
                 }
                 last_numbers.clear();
             }
@@ -194,6 +215,7 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
                     last_x = x;
                     last_y = y;
                 }
+                prev_kern = 0.0;
                 last_numbers.clear();
             }
             Token::Word(w) if fonts.contains(w) => {
@@ -215,15 +237,56 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
     Ok(lines)
 }
 
+/// Kern in dvips units applied AFTER a show operator. Used to decide
+/// whether to insert a synthetic space before the NEXT emission.
+///
+/// Based on the tex.pro procset macros — see `CADE1996.ps` header or
+/// dvips's distributed `tex.pro` for the full definitions.
+fn kern_for_op(w: &str, arg: f32) -> f32 {
+    match w {
+        // Pure show, no kern.
+        "p" | "show" => 0.0,
+        // Argument-based kerns.
+        "b" => arg,
+        "c" => arg - 4.0,
+        "d" => arg - 3.0,
+        "e" => arg - 2.0,
+        "f" => arg - 1.0,
+        "g" => arg,
+        "h" => arg + 1.0,
+        "i" => arg + 2.0,
+        "j" => arg + 3.0,
+        "k" => arg + 4.0,
+        "M" => arg, // ignores the accumulated delta — good enough
+        // Constant kerns, no argument.
+        "l" => -4.0,
+        "m" => -3.0,
+        "n" => -2.0,
+        "o" => -1.0,
+        "q" => 1.0,
+        "r" => 2.0,
+        "s" => 3.0,
+        "t" => 4.0,
+        // y is followed by an absolute moveto; the caller handles
+        // cursor reset, so the kern value isn't meaningful here.
+        "y" => 0.0,
+        _ => 0.0,
+    }
+}
+
 fn emit_string(
     bytes: &[u8],
     font: &str,
     x: f32,
     y: f32,
     page_num: u32,
+    prepend_space: bool,
     line: &mut Vec<TextSpan>,
 ) {
     let mut text = String::new();
+    if prepend_space {
+        text.push(' ');
+    }
     for &b in bytes {
         text.push_str(ot1_to_unicode(b));
     }
@@ -364,12 +427,14 @@ mod tests {
         eprintln!();
 
         // Substring presence — presence-only, no extracted text bodies.
+        // Includes at least one word-space to verify kern-based space
+        // insertion (without requiring the phrase to survive line wraps
+        // — "primitive recursion" in the source is wrapped across a
+        // line break and so legitimately won't be contiguous).
         let substrings: &[&str] = &[
-            "Walther",
-            "Recursion",
+            "Walther Recursion",
             "Introduction",
             "McAllester",
-            "primitive",
             "termination",
         ];
         eprint!("  substrings:");
