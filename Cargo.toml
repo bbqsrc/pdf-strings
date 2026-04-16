@@ -29,6 +29,7 @@ unicode-normalization = "0.1.19"
 cff-parser = "0.1.0"
 ttf-parser = "0.25"
 tracing = "0.1.41"
+fax = "0.2.6"
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

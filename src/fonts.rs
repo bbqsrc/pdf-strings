@@ -27,10 +27,19 @@ pub(crate) struct PdfSimpleFont<'a> {
 #[derive(Clone)]
 pub(crate) struct PdfType3Font<'a> {
     font: &'a Dictionary,
+    doc: &'a Document,
     base_name: String,
     encoding: Option<Vec<u16>>,
     unicode_map: Option<HashMap<CharCode, String>>,
     widths: HashMap<CharCode, f32>,
+    /// True when the font has no ToUnicode and every /Differences name is a
+    /// synthetic dvips-style `a<N>` identifier. Such fonts carry no glyph
+    /// semantics in the encoding; we must recover Unicode via CharProc shape
+    /// matching (see `type3_bitmap`).
+    is_dvips_synthetic: bool,
+    /// CharCode → Unicode recovered from CharProc bitmap matching. Populated
+    /// for dvips-synthetic fonts via the Stage 2 pipeline.
+    recovered_unicode: HashMap<CharCode, String>,
 }
 
 pub(crate) struct PdfCIDFont<'a> {
@@ -549,6 +558,8 @@ impl<'a> PdfType3Font<'a> {
         let encoding: Option<&Object> = get(doc, font, b"Encoding");
 
         let encoding_table;
+        let mut synthetic_name_count: usize = 0;
+        let mut total_name_count: usize = 0;
         match encoding {
             Some(&Object::Name(ref encoding_name)) => {
                 debug!("encoding {:?}", pdf_to_utf8(encoding_name));
@@ -573,6 +584,10 @@ impl<'a> PdfType3Font<'a> {
                             }
                             &Object::Name(ref n) => {
                                 let name = pdf_to_utf8(&n);
+                                total_name_count += 1;
+                                if is_dvips_synthetic_name(&name) {
+                                    synthetic_name_count += 1;
+                                }
                                 let unicode = GLYPH_NAMES
                                     .binary_search_by_key(&name.as_str(), |&(n, _)| n)
                                     .ok()
@@ -606,6 +621,17 @@ impl<'a> PdfType3Font<'a> {
             }
         }
 
+        let is_dvips_synthetic = total_name_count > 0
+            && synthetic_name_count == total_name_count
+            && unicode_map.is_none();
+        if is_dvips_synthetic {
+            debug!(
+                "Type3 font {} uses dvips-synthetic /a<N> glyph names and has no ToUnicode; \
+                 Unicode will be recovered via CharProc bitmap matching",
+                base_name
+            );
+        }
+
         let first_char: i64 = get(doc, font, b"FirstChar");
         let last_char: i64 = get(doc, font, b"LastChar");
         let widths: Vec<f32> = get(doc, font, b"Widths");
@@ -628,12 +654,24 @@ impl<'a> PdfType3Font<'a> {
         assert_eq!(first_char + i - 1, last_char);
         PdfType3Font {
             font,
+            doc,
             base_name,
             widths: width_map,
             encoding: encoding_table,
             unicode_map,
+            is_dvips_synthetic,
+            recovered_unicode: HashMap::new(),
         }
     }
+}
+
+/// Matches dvips' synthetic sequential glyph naming (`/a0`, `/a1`, ..., `/a255`).
+/// These names carry no semantic meaning — they are assigned per unique glyph
+/// shape in document order by dvips/ghostscript when generating a Type3 font.
+fn is_dvips_synthetic_name(name: &str) -> bool {
+    name.len() >= 2
+        && name.as_bytes()[0] == b'a'
+        && name[1..].bytes().all(|b| b.is_ascii_digit())
 }
 
 impl<'a> PdfFont for PdfType3Font<'a> {

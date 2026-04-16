@@ -9,6 +9,7 @@ mod extract;
 mod fonts;
 mod output;
 mod processor;
+mod type3_bitmap;
 mod types;
 mod utils;
 
