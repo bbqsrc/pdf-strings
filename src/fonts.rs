@@ -627,23 +627,34 @@ impl<'a> PdfType3Font<'a> {
             && synthetic_name_count == total_name_count
             && unicode_map.is_none();
 
-        // Recover Unicode for dvips-synthetic fonts by shape-matching each
-        // CharProc bitmap against the embedded reference glyphs. Any glyph
-        // that doesn't match confidently will be decoded as U+FFFD in
-        // `decode_char`.
+        // Recover Unicode for dvips-synthetic fonts in two passes:
+        //   (A) an unconstrained vote against the full reference pool to
+        //       infer which reference-font family this Type3 font draws
+        //       from (Roman, italic, math, etc.), and
+        //   (B) a constrained match within that family only.
+        // Constraining the pool per-font prevents e.g. math-italic CharProcs
+        // from being mislabelled as Roman letters whose pixel layout is
+        // coincidentally closer.
         let mut recovered_unicode: HashMap<CharCode, String> = HashMap::new();
         if is_dvips_synthetic {
             let bitmaps = crate::type3_bitmap::extract_bitmaps(doc, font, &code_to_name);
+            let bm_refs: Vec<&crate::type3_bitmap::Bitmap> = bitmaps.values().collect();
+            let allowed = crate::type3_matcher::infer_allowed_fonts(&bm_refs);
             let mut matched = 0usize;
-            for (code, bm) in &bitmaps {
-                if let Some(s) = crate::type3_matcher::match_bitmap(bm) {
-                    recovered_unicode.insert(*code, s);
-                    matched += 1;
+            if !allowed.is_empty() {
+                for (code, bm) in &bitmaps {
+                    if let Some(s) =
+                        crate::type3_matcher::match_bitmap_in_fonts(bm, &allowed)
+                    {
+                        recovered_unicode.insert(*code, s);
+                        matched += 1;
+                    }
                 }
             }
             debug!(
-                "Type3 font {}: dvips-synthetic, recovered {}/{} glyphs via shape match",
+                "Type3 font {}: dvips-synthetic, family={:?}, recovered {}/{} glyphs",
                 base_name,
+                allowed,
                 matched,
                 bitmaps.len()
             );

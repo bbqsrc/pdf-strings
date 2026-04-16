@@ -5,32 +5,17 @@ CharProcs in dvips-era LaTeX PDFs. Each font is used only as a reference
 for shape matching — we rasterise glyphs at runtime and compare against
 extracted CharProc bitmaps.
 
-## cmunrm.otf, cmunbx.otf, cmunti.otf
+## NewCM10-Regular.otf, NewCM10-Bold.otf, NewCM10-Italic.otf, NewCM10-BoldItalic.otf, NewCMMath-Regular.otf
 
-**Computer Modern Unicode.** Converted from METAFONT sources by
-Andrey V. Panov.
+**New Computer Modern.** A faithful OpenType conversion of Donald E.
+Knuth's original Computer Modern family by Antonis Tsolomitis. This is
+the Unicode-complete successor to the typefaces dvips rendered in 1996
+— Latin Modern and cm-unicode are alternate derivatives, but New CM
+stays closest to the original Metafont outlines.
 
-- Upstream: <https://sourceforge.net/projects/cm-unicode/>
-- License: SIL Open Font License 1.1 (OFL)
-
-## lmroman10-regular.otf, lmroman10-bold.otf, lmroman10-italic.otf, lmromanslant10-regular.otf, lmsans10-regular.otf, lmsans10-bold.otf, lmmono10-regular.otf
-
-**Latin Modern.** Maintained by Bogusław Jackowski and Janusz M. Nowacki
-on behalf of the TeX user groups (CSTUG, DANTE eV, GUST, GUTenberg, NTG,
-TUG). Derived from Donald E. Knuth's Computer Modern.
-
-- Upstream: <https://www.gust.org.pl/projects/e-foundry/latin-modern>
+- Upstream: <https://ctan.org/pkg/newcomputermodern>
 - License: GUST Font License (LPPL-compatible)
 
-## latinmodern-math.otf
-
-**Latin Modern Math.** Companion math font for the Latin Modern family.
-Provides Greek, blackboard bold, fraktur, script, and the full range of
-math operators and symbols used in technical typesetting.
-
-- Upstream: <https://www.gust.org.pl/projects/e-foundry/lm-math>
-- License: GUST Font License (LPPL-compatible)
-
-Both licenses permit redistribution in derivative works including binary
-software distributions. Neither imposes naming restrictions that conflict
-with their use here as reference data.
+The GUST Font License permits redistribution in derivative works
+including binary software distributions. No naming restriction
+conflicts with use here as reference data.

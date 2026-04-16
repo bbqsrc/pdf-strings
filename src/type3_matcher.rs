@@ -34,41 +34,37 @@ type Signature = [u8; SIG_BYTES];
 /// out-of-pool glyphs) rejected. Remaining uncertainty → U+FFFD.
 const ACCEPTABLE_HAMMING: u32 = 260;
 
+/// Reference fonts. Newcomputermodern (Antonis Tsolomitis) is a faithful
+/// OpenType conversion of Donald Knuth's original Computer Modern family,
+/// which is what dvips-era PDFs were drawn from. Prior iterations bundled
+/// Latin Modern and CM Unicode; both are 2000s-era derivatives whose
+/// subtle shape differences caused the matcher to produce wrong-letter
+/// labels at ~50% of matches.
+///
+/// Sans and mono variants are intentionally absent — their sharp block
+/// edges survive 1-bit quantisation better than serifed Roman, which
+/// gave the matcher false wins under pixel XOR. Until we have shape
+/// features robust to pixelation, only serifed Roman / math variants.
 const REFERENCE_FONTS: &[(&str, &[u8])] = &[
-    ("cmunrm", include_bytes!("data/fonts/cmunrm.otf")),
-    ("cmunbx", include_bytes!("data/fonts/cmunbx.otf")),
-    ("cmunti", include_bytes!("data/fonts/cmunti.otf")),
     (
-        "lmroman10-regular",
-        include_bytes!("data/fonts/lmroman10-regular.otf"),
+        "NewCM10-Regular",
+        include_bytes!("data/fonts/NewCM10-Regular.otf"),
     ),
     (
-        "lmroman10-bold",
-        include_bytes!("data/fonts/lmroman10-bold.otf"),
+        "NewCM10-Bold",
+        include_bytes!("data/fonts/NewCM10-Bold.otf"),
     ),
     (
-        "lmroman10-italic",
-        include_bytes!("data/fonts/lmroman10-italic.otf"),
+        "NewCM10-Italic",
+        include_bytes!("data/fonts/NewCM10-Italic.otf"),
     ),
     (
-        "lmromanslant10-regular",
-        include_bytes!("data/fonts/lmromanslant10-regular.otf"),
+        "NewCM10-BoldItalic",
+        include_bytes!("data/fonts/NewCM10-BoldItalic.otf"),
     ),
     (
-        "lmsans10-regular",
-        include_bytes!("data/fonts/lmsans10-regular.otf"),
-    ),
-    (
-        "lmsans10-bold",
-        include_bytes!("data/fonts/lmsans10-bold.otf"),
-    ),
-    (
-        "lmmono10-regular",
-        include_bytes!("data/fonts/lmmono10-regular.otf"),
-    ),
-    (
-        "latinmodern-math",
-        include_bytes!("data/fonts/latinmodern-math.otf"),
+        "NewCMMath-Regular",
+        include_bytes!("data/fonts/NewCMMath-Regular.otf"),
     ),
 ];
 
@@ -76,12 +72,27 @@ struct ReferenceEntry {
     sig: Signature,
     unicode: String,
     aspect: u8,
+    /// Index into REFERENCE_FONTS — the reference family this entry came
+    /// from. Used by per-Type3-font family inference to constrain search.
+    font_idx: u8,
+    /// Size bucket from [`size_bucket`] computed on the raster's ink-bbox
+    /// max dimension. Matching restricts candidates to the same or an
+    /// adjacent bucket so dvips-era pixelated CharProcs compare against
+    /// reference rasters of comparable resolution, not smoothly-rendered
+    /// 96 px vector glyphs.
+    size_bucket: u8,
 }
 
 /// Max difference in aspect bucket between target and candidate we will tolerate.
 /// 1 means "adjacent buckets allowed" — lets e.g. an 'i' (tall) match a slightly
 /// wider variant while still excluding square and wide glyphs.
 const ASPECT_TOLERANCE: i32 = 1;
+
+/// Max difference in size bucket. dvips-era CharProcs are 1-bit pixelated
+/// bitmaps whose pixelation artefacts only match cleanly against similarly-
+/// sized reference rasterisations. 1 (adjacent) keeps matches within a
+/// roughly 1.5× resolution range.
+const SIZE_TOLERANCE: i32 = 1;
 
 static REFERENCE: OnceLock<Vec<ReferenceEntry>> = OnceLock::new();
 
@@ -93,10 +104,28 @@ fn aspect_bucket(w: u32, h: u32) -> u8 {
     ((w * 7) / (w + h)).min(7) as u8
 }
 
+/// Size bucket derived from a glyph's ink-bbox max dimension in pixels.
+/// Logarithmic spacing (each bucket ~1.5× the previous) so neighbouring
+/// buckets cover rasters of comparable pixelation granularity.
+///
+/// Buckets: 0: ≤13, 1: ≤20, 2: ≤30, 3: ≤45, 4: ≤70, 5: ≤105, 6: ≤160, 7: >160.
+fn size_bucket(max_dim: u32) -> u8 {
+    match max_dim {
+        0..=13 => 0,
+        14..=20 => 1,
+        21..=30 => 2,
+        31..=45 => 3,
+        46..=70 => 4,
+        71..=105 => 5,
+        106..=160 => 6,
+        _ => 7,
+    }
+}
+
 /// Produce a 32×32 1-bpp signature from a bitmap: crop to ink bbox, centre
 /// the ink inside a max(w,h)-sided square, resample via nearest-source.
-/// Also returns the glyph's aspect bucket for candidate pruning.
-fn signature(bm: &Bitmap) -> Option<(Signature, u8)> {
+/// Also returns the aspect-ratio and size buckets for candidate pruning.
+fn signature(bm: &Bitmap) -> Option<(Signature, u8, u8)> {
     let (x0, y0, x1, y1) = bm.ink_bbox()?;
     let w = (x1 - x0) as i32;
     let h = (y1 - y0) as i32;
@@ -120,7 +149,8 @@ fn signature(bm: &Bitmap) -> Option<(Signature, u8)> {
             }
         }
     }
-    Some((sig, aspect_bucket(w as u32, h as u32)))
+    let size = size_bucket(side as u32);
+    Some((sig, aspect_bucket(w as u32, h as u32), size))
 }
 
 fn hamming(a: &Signature, b: &Signature) -> u32 {
@@ -180,13 +210,17 @@ fn is_useful_codepoint(cp: u32) -> bool {
 
 /// Sizes at which to rasterise each reference glyph. Covers the range of
 /// CharProc pixel dimensions seen in dvips-era bitmaps (roughly 13-164px
-/// tall). Small size helps match coarse/compact CharProcs; large size
-/// helps match display-size CharProcs.
-const REFERENCE_SIZES_PX: &[f32] = &[32.0, 64.0, 96.0];
+/// tall). Small sizes produce more aggressively-quantised raster output
+/// from fontdue, better matching the 1-bit pixelation of real PK-era
+/// CharProcs; larger sizes cover display-size glyphs. Size-bucket
+/// filtering at match time keeps the comparison within a consistent
+/// pixel density.
+const REFERENCE_SIZES_PX: &[f32] = &[16.0, 20.0, 24.0, 32.0, 48.0, 64.0, 96.0];
 
 fn build_reference() -> Vec<ReferenceEntry> {
     let mut entries = Vec::new();
-    for (name, data) in REFERENCE_FONTS {
+    for (font_idx, (name, data)) in REFERENCE_FONTS.iter().enumerate() {
+        let font_idx = font_idx as u8;
         let Ok(font) = fontdue::Font::from_bytes(*data, fontdue::FontSettings::default()) else {
             debug!("fontdue failed to parse {}", name);
             continue;
@@ -218,9 +252,10 @@ fn build_reference() -> Vec<ReferenceEntry> {
                 };
 
                 // Rasterise at each reference size; push an entry per
-                // distinct signature. The matcher picks the best match
-                // across all sizes.
-                let mut last_sig: Option<Signature> = None;
+                // distinct (signature, size-bucket) pair. The matcher
+                // picks the best match across all sizes and filters
+                // candidates by target size.
+                let mut last_sig: Option<(Signature, u8)> = None;
                 for &px in REFERENCE_SIZES_PX {
                     let (metrics, bitmap_gray) = font.rasterize(ch, px);
                     if metrics.width == 0 || metrics.height == 0 {
@@ -231,19 +266,25 @@ fn build_reference() -> Vec<ReferenceEntry> {
                         metrics.width as u32,
                         metrics.height as u32,
                     );
-                    let Some((sig, aspect)) = signature(&bm) else {
+                    let Some((sig, aspect, size_bucket)) = signature(&bm) else {
                         continue;
                     };
                     // Dedup: small and large rasterisations of the same
-                    // glyph often hash identically after normalisation.
-                    if last_sig.as_ref() == Some(&sig) {
+                    // glyph often hash identically after normalisation, but
+                    // we still want the per-size entries so the matcher can
+                    // compare against the one whose native resolution is
+                    // closest to the target. Dedup only when BOTH sig and
+                    // size bucket match the last one.
+                    if last_sig.as_ref() == Some(&(sig, size_bucket)) {
                         continue;
                     }
-                    last_sig = Some(sig);
+                    last_sig = Some((sig, size_bucket));
                     entries.push(ReferenceEntry {
                         sig,
                         unicode: ch.to_string(),
                         aspect,
+                        font_idx,
+                        size_bucket,
                     });
                     glyph_count += 1;
                 }
@@ -256,12 +297,14 @@ fn build_reference() -> Vec<ReferenceEntry> {
 }
 
 /// Result of looking up a bitmap against the reference pool.
-#[allow(dead_code)] // runner_up_* are only read by #[ignore]-gated debug tests
+#[allow(dead_code)] // runner_up_* / font_idx are only read by diagnostics or callers
 pub(crate) struct MatchResult {
     pub unicode: String,
     pub distance: u32,
     pub runner_up_distance: u32,
     pub runner_up_unicode: String,
+    /// Which REFERENCE_FONTS index the winning entry came from.
+    pub font_idx: u8,
 }
 
 /// Match a Type3 CharProc bitmap against the embedded reference pool.
@@ -272,17 +315,48 @@ pub(crate) fn match_bitmap(bm: &Bitmap) -> Option<String> {
         .map(|m| m.unicode)
 }
 
+/// Match restricted to the given reference-font indices. Returns the best
+/// match within those families, or None if the pool is empty or the
+/// distance exceeds `ACCEPTABLE_HAMMING`.
+pub(crate) fn match_bitmap_in_fonts(bm: &Bitmap, allowed: &[u8]) -> Option<String> {
+    if allowed.is_empty() {
+        return None;
+    }
+    best_match_in_fonts(bm, allowed)
+        .filter(|m| m.distance <= ACCEPTABLE_HAMMING)
+        .map(|m| m.unicode)
+}
+
 /// Find the closest reference entry regardless of threshold. Used by
 /// callers that want to inspect the match quality (e.g. diagnostics).
 pub(crate) fn best_match(bm: &Bitmap) -> Option<MatchResult> {
+    best_match_impl(bm, |_| true)
+}
+
+/// `best_match` constrained to entries from `allowed` font indices.
+pub(crate) fn best_match_in_fonts(bm: &Bitmap, allowed: &[u8]) -> Option<MatchResult> {
+    best_match_impl(bm, |e| allowed.contains(&e.font_idx))
+}
+
+fn best_match_impl(
+    bm: &Bitmap,
+    filter: impl Fn(&ReferenceEntry) -> bool,
+) -> Option<MatchResult> {
     let reference = REFERENCE.get_or_init(build_reference);
-    let (target_sig, target_aspect) = signature(bm)?;
+    let (target_sig, target_aspect, target_size) = signature(bm)?;
 
     let mut best: Option<(&ReferenceEntry, u32)> = None;
     let mut runner_up: Option<(&ReferenceEntry, u32)> = None;
     for entry in reference {
+        if !filter(entry) {
+            continue;
+        }
         let aspect_diff = (entry.aspect as i32 - target_aspect as i32).abs();
         if aspect_diff > ASPECT_TOLERANCE {
+            continue;
+        }
+        let size_diff = (entry.size_bucket as i32 - target_size as i32).abs();
+        if size_diff > SIZE_TOLERANCE {
             continue;
         }
         let d = hamming(&entry.sig, &target_sig);
@@ -311,7 +385,48 @@ pub(crate) fn best_match(bm: &Bitmap) -> Option<MatchResult> {
         distance: d,
         runner_up_distance: ru_d,
         runner_up_unicode: ru_entry_u,
+        font_idx: entry.font_idx,
     })
+}
+
+/// Vote for the dominant reference-font family used by a Type3 font.
+/// Runs an unconstrained best-match per bitmap; any bitmap whose best
+/// match is within `VOTE_THRESHOLD` bits casts a vote for its winning
+/// font index. The allowed set is every index with at least
+/// `winner_votes / 3` votes — keeps the dominant family plus any
+/// runners-up that consistently win alongside, and excludes fonts that
+/// picked up only accidental votes.
+///
+/// Returns an empty Vec if the Type3 font has no confident matches in
+/// any reference family (typically CMEX-style extension fonts or bold
+/// math symbols we don't ship).
+pub(crate) fn infer_allowed_fonts(bitmaps: &[&Bitmap]) -> Vec<u8> {
+    // Only count matches that are actually tight. At 120 bits (~12% pixel
+    // difference), we're looking at plausibly the same letter in the same
+    // family, not a wild pixel-layout coincidence. Loose matches were
+    // letting latinmodern-math win Roman-font votes by virtue of its
+    // Latin alphabet having superficially similar silhouettes.
+    const VOTE_THRESHOLD: u32 = 120;
+    let n_fonts = REFERENCE_FONTS.len();
+    let mut votes = vec![0u32; n_fonts];
+    for bm in bitmaps {
+        if let Some(m) = best_match(bm) {
+            if m.distance <= VOTE_THRESHOLD {
+                votes[m.font_idx as usize] += 1;
+            }
+        }
+    }
+    let winner = *votes.iter().max().unwrap_or(&0);
+    if winner == 0 {
+        return Vec::new();
+    }
+    // Allow fonts within half the winner's vote count — keep the dominant
+    // family and close seconds, drop anything that only caught a couple
+    // of accidental wins.
+    let cutoff = (winner / 2).max(1);
+    (0..n_fonts as u8)
+        .filter(|&i| votes[i as usize] >= cutoff)
+        .collect()
 }
 
 #[cfg(test)]
@@ -482,6 +597,121 @@ mod tests {
         );
     }
 
+    /// Report, per Type3 font in CADE1996.pdf, which reference families
+    /// the inference pass selected and how many of the font's CharProcs
+    /// voted confidently. Numeric-only; safe to print.
+    #[test]
+    #[ignore]
+    fn cade1996_family_inference() {
+        use crate::type3_bitmap::extract_bitmaps;
+        use crate::utils::maybe_deref;
+        use lopdf::{Document, Object};
+        use std::collections::HashMap;
+
+        let pdf_path = std::env::var("CADE1996_PDF")
+            .unwrap_or_else(|_| std::env::var("HOME").unwrap() + "/Downloads/CADE1996.pdf");
+        let Ok(doc) = Document::load(&pdf_path) else {
+            eprintln!("skipped: {} not readable", pdf_path);
+            return;
+        };
+
+        for (_obj_id, obj) in doc.objects.iter() {
+            let Object::Dictionary(dict) = obj else {
+                continue;
+            };
+            let Ok(Object::Name(subtype)) = dict.get(b"Subtype") else {
+                continue;
+            };
+            if subtype != b"Type3" {
+                continue;
+            }
+            let font_name = dict
+                .get(b"Name")
+                .ok()
+                .and_then(|o| o.as_name().ok())
+                .map(|b| String::from_utf8_lossy(b).into_owned())
+                .unwrap_or_else(|| "?".into());
+
+            let mut code_to_name: HashMap<u32, String> = HashMap::new();
+            if let Ok(enc_obj) = dict.get(b"Encoding") {
+                let enc = maybe_deref(&doc, enc_obj);
+                if let Ok(enc_dict) = enc.as_dict() {
+                    if let Ok(Object::Array(diffs)) = enc_dict.get(b"Differences") {
+                        let mut code = 0i64;
+                        for o in diffs {
+                            let o = maybe_deref(&doc, o);
+                            match o {
+                                Object::Integer(i) => code = *i,
+                                Object::Name(n) => {
+                                    code_to_name.insert(
+                                        code as u32,
+                                        String::from_utf8_lossy(n).into_owned(),
+                                    );
+                                    code += 1;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+
+            let bitmaps = extract_bitmaps(&doc, dict, &code_to_name);
+            let bm_refs: Vec<&Bitmap> = bitmaps.values().collect();
+
+            // Per-font vote tally (unconstrained).
+            let mut votes = vec![0u32; REFERENCE_FONTS.len()];
+            let mut voters = 0u32;
+            for bm in &bm_refs {
+                if let Some(m) = best_match(bm) {
+                    if m.distance <= 200 {
+                        votes[m.font_idx as usize] += 1;
+                        voters += 1;
+                    }
+                }
+            }
+            let allowed = infer_allowed_fonts(&bm_refs);
+
+            eprintln!(
+                "Font {}: {} glyphs, {} voters, allowed={:?}",
+                font_name,
+                bitmaps.len(),
+                voters,
+                allowed,
+            );
+            // Per-reference-font vote count (by index, no text).
+            eprint!("       votes:");
+            for (i, v) in votes.iter().enumerate() {
+                if *v > 0 {
+                    eprint!(" [{}:{}]", i, v);
+                }
+            }
+            eprintln!();
+
+            // Final match count within constrained pool.
+            let mut matched = 0usize;
+            for bm in &bm_refs {
+                if match_bitmap_in_fonts(bm, &allowed).is_some() {
+                    matched += 1;
+                }
+            }
+            eprintln!(
+                "       constrained matches: {}/{} ({}%)",
+                matched,
+                bitmaps.len(),
+                if bitmaps.is_empty() {
+                    0
+                } else {
+                    matched * 100 / bitmaps.len()
+                }
+            );
+        }
+        eprintln!("reference font indices:");
+        for (i, (name, _)) in REFERENCE_FONTS.iter().enumerate() {
+            eprintln!("  [{}] = {}", i, name);
+        }
+    }
+
     /// Safe end-to-end coverage check: extract CADE1996.pdf via the public
     /// API and report only COUNTS — never the recovered text itself, which
     /// can contain enough garbled bytes to trip protective filters in
@@ -554,6 +784,24 @@ mod tests {
             "  classes: ascii-alnum={} latin-ext={} mod-diac={} greek={} math={} space/punct={} other={}",
             ascii, latin_ext, mod_diacritic, greek, math, space_punct, other
         );
+        // Top ASCII-letter frequencies. In English the expected order
+        // (approximately) is e t a o i n s h r d l. A wildly different
+        // order is a signal of widespread wrong-label matches.
+        let mut counts = [0u32; 26];
+        for c in text.chars() {
+            if ('a'..='z').contains(&c) {
+                counts[(c as u8 - b'a') as usize] += 1;
+            } else if ('A'..='Z').contains(&c) {
+                counts[(c as u8 - b'A') as usize] += 1;
+            }
+        }
+        let mut pairs: Vec<(u8, u32)> = (0..26u8).map(|i| (i, counts[i as usize])).collect();
+        pairs.sort_by(|a, b| b.1.cmp(&a.1));
+        eprint!("  top letters:");
+        for (i, n) in pairs.iter().take(10) {
+            eprint!(" {}:{}", (b'a' + i) as char, n);
+        }
+        eprintln!();
         assert!(total > 500, "expected at least 500 extracted chars");
         // Calibrated floor. Landed ~50% after expanding the reference pool
         // (adding LM Math/Sans/Mono/Slanted), adding aspect-ratio bucketing
