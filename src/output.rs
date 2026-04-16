@@ -1,9 +1,119 @@
 use euclid::{Transform2D, vec2};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::error::OutputError;
 use crate::types::{BoundingBox, MediaBox, TextSpan, Transform};
 
 type ArtBox = (f32, f32, f32, f32);
+
+/// Map standalone spacing diacriticals to their combining equivalents.
+fn standalone_to_combining(ch: char) -> Option<char> {
+    match ch {
+        '\u{00A8}' => Some('\u{0308}'), // diaeresis
+        '\u{00B4}' => Some('\u{0301}'), // acute
+        '\u{0060}' => Some('\u{0300}'), // grave
+        '\u{02C6}' => Some('\u{0302}'), // circumflex
+        '\u{02DC}' => Some('\u{0303}'), // tilde
+        '\u{00B8}' => Some('\u{0327}'), // cedilla
+        '\u{02C7}' => Some('\u{030C}'), // caron
+        '\u{02D8}' => Some('\u{0306}'), // breve
+        '\u{02D9}' => Some('\u{0307}'), // dot above
+        '\u{02DA}' => Some('\u{030A}'), // ring above
+        '\u{02DD}' => Some('\u{030B}'), // double acute
+        '\u{02DB}' => Some('\u{0328}'), // ogonek
+        '\u{00AF}' => Some('\u{0304}'), // macron
+        _ => None,
+    }
+}
+
+/// Check if a character is a diacritical mark (combining or standalone).
+fn is_diacritical(ch: char) -> bool {
+    matches!(ch,
+        '\u{0300}'..='\u{036F}'   // Combining Diacritical Marks
+        | '\u{1AB0}'..='\u{1AFF}' // Combining Diacritical Marks Extended
+        | '\u{1DC0}'..='\u{1DFF}' // Combining Diacritical Marks Supplement
+        | '\u{20D0}'..='\u{20FF}' // Combining Diacritical Marks for Symbols
+        | '\u{FE20}'..='\u{FE2F}' // Combining Half Marks
+    ) || standalone_to_combining(ch).is_some()
+}
+
+/// Check if a string consists entirely of diacritical characters.
+fn is_all_diacritical(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(is_diacritical)
+}
+
+/// Convert all standalone diacriticals in a string to their combining forms.
+fn to_combining_forms(s: &str) -> String {
+    s.chars()
+        .map(|ch| standalone_to_combining(ch).unwrap_or(ch))
+        .collect()
+}
+
+/// Insert a combining mark into a string at the position matching the diacritical's
+/// horizontal coordinate within the span. If the positionally-estimated character
+/// doesn't compose with the mark, searches nearby for one that does (e.g. a vowel
+/// that naturally takes an umlaut).
+fn insert_combining_at_position(
+    text: &str,
+    span_left: f32,
+    span_right: f32,
+    combining: char,
+    diac_x: f32,
+) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return combining.to_string();
+    }
+    if chars.len() == 1 {
+        let mut result = String::new();
+        result.push(chars[0]);
+        result.push(combining);
+        return result;
+    }
+
+    // Estimate which character the diacritical sits over
+    let span_width = span_right - span_left;
+    let char_width = span_width / chars.len() as f32;
+    let target_idx = if char_width > 0.0 {
+        ((diac_x - span_left) / char_width) as usize
+    } else {
+        0
+    };
+    let target_idx = target_idx.min(chars.len() - 1);
+
+    // Check if inserting the combining mark after a character produces a composed form
+    let composes_with = |idx: usize| -> bool {
+        let mut test = String::new();
+        test.push(chars[idx]);
+        test.push(combining);
+        let composed: String = test.nfc().collect();
+        composed.chars().count() == 1
+    };
+
+    let mut best_idx = target_idx;
+    if !composes_with(target_idx) {
+        // Search nearby (within 2 chars) for a character that composes
+        for dist in 1..=2 {
+            if target_idx >= dist && composes_with(target_idx - dist) {
+                best_idx = target_idx - dist;
+                break;
+            }
+            if target_idx + dist < chars.len() && composes_with(target_idx + dist) {
+                best_idx = target_idx + dist;
+                break;
+            }
+        }
+    }
+
+    let mut result = String::new();
+    for (i, &ch) in chars.iter().enumerate() {
+        result.push(ch);
+        if i == best_idx {
+            result.push(combining);
+        }
+    }
+    result
+}
 
 pub(crate) struct BoundingBoxOutput {
     flip_ctm: Transform,
@@ -129,6 +239,53 @@ impl BoundingBoxOutput {
             lines.push(current_line);
         }
 
+        // Post-processing: merge any remaining diacritical-only spans with their neighbors
+        for line in &mut lines {
+            let mut i = 0;
+            while i < line.len() {
+                if is_all_diacritical(&line[i].text) {
+                    let diac_span = &line[i];
+                    let diac_l = diac_span.bbox.l;
+                    let diac_r = diac_span.bbox.r;
+
+                    // Find a neighbor span whose horizontal extent overlaps
+                    let mut merge_target = None;
+                    for j in 0..line.len() {
+                        if j == i {
+                            continue;
+                        }
+                        let neighbor = &line[j];
+                        if diac_l < neighbor.bbox.r && diac_r > neighbor.bbox.l {
+                            merge_target = Some(j);
+                            break;
+                        }
+                    }
+
+                    if let Some(j) = merge_target {
+                        let diac_center_x = (diac_l + diac_r) / 2.0;
+                        let diac_chars: Vec<char> = line[i].text.chars().collect();
+                        for ch in diac_chars {
+                            let combining = standalone_to_combining(ch).unwrap_or(ch);
+                            line[j].text = insert_combining_at_position(
+                                &line[j].text,
+                                line[j].bbox.l,
+                                line[j].bbox.r,
+                                combining,
+                                diac_center_x,
+                            );
+                        }
+                        line[j].text = line[j].text.nfc().collect();
+                        line.remove(i);
+                        // Don't increment i — the next element shifted into this position
+                    } else {
+                        i += 1;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
         lines
     }
 
@@ -157,8 +314,10 @@ impl BoundingBoxOutput {
                 l: bottom_left_x,
             };
 
+            let normalized_text: String = self.buf.nfkc().collect();
+
             self.spans.push(TextSpan {
-                text: self.buf.clone(),
+                text: normalized_text,
                 bbox,
                 font_name: self.buf_font_name.clone(),
                 font_size: self.buf_font_size,
@@ -203,6 +362,10 @@ impl BoundingBoxOutput {
 
         let normalized_char = if char == "\t" { " " } else { char };
 
+        // Check if the incoming character is a diacritical mark
+        let incoming_is_diacritical = normalized_char.chars().count() == 1
+            && is_diacritical(normalized_char.chars().next().unwrap());
+
         if self.buf.is_empty() {
             // First character of a new span (either very first, or after flush)
             self.buf_start_x = x;
@@ -237,6 +400,51 @@ impl BoundingBoxOutput {
                 || (gap_ratio.abs() > Self::CHAR_FLUSH_THRESHOLD_RATIO);
 
             if should_flush {
+                // Before flushing, check if we can merge a diacritical with the buffer
+                let tolerance = transformed_font_size * 0.3;
+                let x_overlaps =
+                    x >= self.buf_start_x - tolerance && x <= self.buf_end_x + tolerance;
+                let y_close = y_gap <= transformed_font_size * 1.5;
+
+                if incoming_is_diacritical && x_overlaps && y_close {
+                    // Diacritical overlaps the current buffer — merge it in
+                    let ch = normalized_char.chars().next().unwrap();
+                    let combining = standalone_to_combining(ch).unwrap_or(ch);
+                    self.buf = insert_combining_at_position(
+                        &self.buf,
+                        self.buf_start_x,
+                        self.buf_end_x,
+                        combining,
+                        x,
+                    );
+                    // Don't update buf_end_x or last_x/last_y — diacritical has no width
+                    return Ok(());
+                }
+
+                // Check the reverse: buffer is only diacritical(s), incoming is a base letter
+                if is_all_diacritical(&self.buf)
+                    && !incoming_is_diacritical
+                    && x_overlaps
+                    && y_close
+                {
+                    // Reorder: base letter first, then combining marks
+                    let combining_marks = to_combining_forms(&self.buf);
+                    self.buf.clear();
+                    self.buf += normalized_char;
+                    self.buf += &combining_marks;
+                    // Update positions to the base letter's position
+                    self.buf_start_x = x;
+                    self.buf_start_y = y;
+                    self.buf_font_name = font_name.to_owned();
+                    self.buf_font_size = font_size;
+                    self.buf_ctm = *trm;
+                    self.first_char = false;
+                    self.last_x = x;
+                    self.last_y = y;
+                    self.buf_end_x = x + width * transformed_font_size;
+                    return Ok(());
+                }
+
                 self.flush_string()?;
                 self.buf_start_x = x;
                 self.buf_start_y = y;
