@@ -119,6 +119,11 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
     // space before the next emission. Zero when the next span follows
     // an absolute moveto (`a` / `y`) rather than an in-line kern.
     let mut prev_kern: f32 = 0.0;
+    // dvips `delta` register. Set by `b` (delta=arg), `M` (delta+=arg),
+    // `c`-`k` (delta+=const_for_op) via the `tail` macro. Read by `M`
+    // and `c`-`k` to compute the final kern. `p`, `show`, `l`-`t` do
+    // not touch delta. Absolute moveto resets it.
+    let mut delta: f32 = 0.0;
     // Line break threshold in dvips units (300dpi → 72pt ≈ 1/300 inch per unit).
     // Paragraph line-spacing at 10pt is ~12pt = 50 units; use 15 as a
     // conservative break threshold.
@@ -142,6 +147,12 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
                     page_num += 1;
                 }
                 in_page = true;
+                // Conservatively reset the kerning register per page.
+                // dvips' procset does not require this, but any real
+                // page's first text emission will re-establish delta
+                // via a `b` or `M`.
+                prev_kern = 0.0;
+                delta = 0.0;
                 last_numbers.clear();
                 pending_string = None;
             }
@@ -186,10 +197,16 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
                         &mut current_line,
                     );
                 }
-                // Compute this op's kern (applied AFTER the show) so the
-                // next iteration can decide on word-boundary vs merge.
+                // Compute this op's kern (applied AFTER the show) and
+                // update the dvips `delta` register. Some kerning ops
+                // (c-k, M) produce kerns as arg + delta and also set
+                // delta = arg + delta — this state is what carries
+                // word-space-sized kerns through runs of letter-level
+                // show operators.
                 let arg = last_numbers.last().copied().unwrap_or(0.0) as f32;
-                prev_kern = kern_for_op(w, arg);
+                let (k, new_delta) = kern_for_op(w, arg, delta);
+                prev_kern = k;
+                delta = new_delta;
 
                 // `y` is "show then absolute-moveto" — the two preceding
                 // numbers are the new position. Other show operators are
@@ -203,13 +220,18 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
                     }
                     last_x = nx;
                     last_y = ny;
-                    // Absolute moveto resets the relevant kerning context.
+                    // `y`'s tail (`a`) doesn't touch delta in dvips; leave
+                    // delta alone. Only reset prev_kern so the first
+                    // emission after the moveto isn't merged by accident.
                     prev_kern = 0.0;
                 }
                 last_numbers.clear();
             }
             Token::Word("a") => {
                 // Absolute moveto: consumes the two most recent numbers as x, y.
+                // dvips' `/a{moveto}B` does NOT touch `delta`; TeX relies on
+                // delta being carried across movetos so that subsequent
+                // kerns from c-k / M still produce full word-width gaps.
                 if last_numbers.len() >= 2 {
                     let y = last_numbers[last_numbers.len() - 1] as f32;
                     let x = last_numbers[last_numbers.len() - 2] as f32;
@@ -242,40 +264,70 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
     Ok(lines)
 }
 
-/// Kern in dvips units applied AFTER a show operator. Used to decide
-/// whether to insert a synthetic space before the NEXT emission.
+/// Kern in dvips units applied AFTER a show operator, and the new value
+/// of the `delta` register. Used to decide whether to insert a
+/// synthetic space before the NEXT emission.
 ///
-/// Based on the tex.pro procset macros — see `CADE1996.ps` header or
-/// dvips's distributed `tex.pro` for the full definitions.
-fn kern_for_op(w: &str, arg: f32) -> f32 {
+/// Operator semantics from the dvips procset:
+///   - `p` / `show`      : print, no kern, no delta change
+///   - `b`               : print, move by arg, delta = arg
+///   - `c`..`k`          : print, move by N+delta, delta = N+delta
+///                         (N = -4,-3,-2,-1,0,+1,+2,+3,+4 respectively)
+///   - `M`               : print, move by arg+delta, delta = arg+delta
+///   - `l`..`t` (not m,n): print, move by N, delta unchanged
+///                         (N from -4..-1 and +1..+4)
+///   - `y`               : print, then absolute moveto; caller resets
+fn kern_for_op(w: &str, arg: f32, delta: f32) -> (f32, f32) {
     match w {
-        // Pure show, no kern.
-        "p" | "show" => 0.0,
-        // Argument-based kerns.
-        "b" => arg,
-        "c" => arg - 4.0,
-        "d" => arg - 3.0,
-        "e" => arg - 2.0,
-        "f" => arg - 1.0,
-        "g" => arg,
-        "h" => arg + 1.0,
-        "i" => arg + 2.0,
-        "j" => arg + 3.0,
-        "k" => arg + 4.0,
-        "M" => arg, // ignores the accumulated delta — good enough
-        // Constant kerns, no argument.
-        "l" => -4.0,
-        "m" => -3.0,
-        "n" => -2.0,
-        "o" => -1.0,
-        "q" => 1.0,
-        "r" => 2.0,
-        "s" => 3.0,
-        "t" => 4.0,
-        // y is followed by an absolute moveto; the caller handles
-        // cursor reset, so the kern value isn't meaningful here.
-        "y" => 0.0,
-        _ => 0.0,
+        "p" | "show" => (0.0, delta),
+        "b" => (arg, arg),
+        "c" => {
+            let k = -4.0 + delta;
+            (k, k)
+        }
+        "d" => {
+            let k = -3.0 + delta;
+            (k, k)
+        }
+        "e" => {
+            let k = -2.0 + delta;
+            (k, k)
+        }
+        "f" => {
+            let k = -1.0 + delta;
+            (k, k)
+        }
+        "g" => (delta, delta),
+        "h" => {
+            let k = 1.0 + delta;
+            (k, k)
+        }
+        "i" => {
+            let k = 2.0 + delta;
+            (k, k)
+        }
+        "j" => {
+            let k = 3.0 + delta;
+            (k, k)
+        }
+        "k" => {
+            let k = 4.0 + delta;
+            (k, k)
+        }
+        "M" => {
+            let k = arg + delta;
+            (k, k)
+        }
+        "l" => (-4.0, delta),
+        "m" => (-3.0, delta),
+        "n" => (-2.0, delta),
+        "o" => (-1.0, delta),
+        "q" => (1.0, delta),
+        "r" => (2.0, delta),
+        "s" => (3.0, delta),
+        "t" => (4.0, delta),
+        "y" => (0.0, delta),
+        _ => (0.0, delta),
     }
 }
 
@@ -455,6 +507,10 @@ mod tests {
         let substrings: &[&str] = &[
             "Walther Recursion",
             "David McAllester",
+            "Kostas Arkoudas",
+            "AT&T Labs",
+            "MIT Artificial Intelligence",
+            "Primitive recursion",
             "Introduction",
             "termination",
         ];
