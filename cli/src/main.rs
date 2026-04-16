@@ -13,13 +13,13 @@ enum OutputFormat {
 
 #[derive(Parser)]
 #[command(name = "pdf-strings")]
-#[command(about = "Extract text from PDF files", long_about = None)]
+#[command(about = "Extract text from PDF or dvips PostScript files", long_about = None)]
 struct Args {
-    /// PDF file to extract text from
+    /// Input file (.pdf or .ps). Dispatch is by extension.
     #[arg(value_name = "FILE")]
     file: PathBuf,
 
-    /// Password for encrypted PDFs
+    /// Password for encrypted PDFs (ignored for .ps inputs)
     #[arg(short, long)]
     password: Option<String>,
 
@@ -31,17 +31,29 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    // Build extractor with optional password
-    let extractor = if let Some(password) = args.password {
-        pdf_strings::PdfExtractor::builder()
-            .password(password)
-            .build()
+    let is_ps = args
+        .file
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("ps"))
+        .unwrap_or(false);
+
+    // Dispatch: .ps → PostScript path (password ignored),
+    //          everything else → PDF path (honours password).
+    let result = if is_ps {
+        pdf_strings::from_ps_path(&args.file)
     } else {
-        pdf_strings::PdfExtractor::default()
+        let extractor = if let Some(password) = args.password {
+            pdf_strings::PdfExtractor::builder()
+                .password(password)
+                .build()
+        } else {
+            pdf_strings::PdfExtractor::default()
+        };
+        extractor.from_path(&args.file)
     };
 
-    // Extract text
-    let output = match extractor.from_path(&args.file) {
+    let output = match result {
         Ok(output) => output,
         Err(e) => {
             eprintln!("Error extracting text from {:?}: {}", args.file, e);
