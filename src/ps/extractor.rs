@@ -12,12 +12,51 @@
 //! We do not execute PostScript — we only lift the text off by scanning
 //! tokens linearly.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::error::OutputError;
-use crate::ps::encodings::ot1_to_unicode;
+use crate::ps::encodings::{Encoding, decode_byte};
 use crate::ps::tokeniser::{Token, Tokeniser};
 use crate::types::{BoundingBox, TextSpan};
+
+/// Classify a font's TeX encoding from its per-byte emission histogram.
+/// OT1 (text fonts): emissions concentrated in 0x20-0x7E, with
+/// occasional ligatures at 0x0B-0x0F. OML (CMMI math italic): heavy use
+/// of 0x0B-0x29 (Greek lowercase) plus italic letters at ASCII
+/// positions. OMS (CMSY math symbols): heavy use of 0x00-0x3F for
+/// operators / relations / arrows.
+fn detect_encoding(histogram: &[u32; 128]) -> Encoding {
+    let total: u32 = histogram.iter().sum();
+    if total == 0 {
+        return Encoding::Ot1;
+    }
+    // Bytes in 0x00..=0x1F that aren't OT1 ligatures (0x0B..=0x0F)
+    // are a strong math-font signal — OT1 text emits these almost
+    // never. Threshold: 10% of emissions.
+    let mut low_nonlig: u32 = 0;
+    for (i, c) in histogram.iter().enumerate() {
+        if i < 0x20 && !(0x0B..=0x0F).contains(&i) {
+            low_nonlig += c;
+        }
+    }
+    if low_nonlig * 100 / total < 10 {
+        return Encoding::Ot1;
+    }
+    // Math font. Distinguish CMMI (italic letters present) from CMSY
+    // (relations/operators) by letter density: if >30% of emissions
+    // are in 0x41..=0x5A or 0x61..=0x7A, treat as OML; else OMS.
+    let mut letters: u32 = 0;
+    for (i, c) in histogram.iter().enumerate() {
+        if (0x41..=0x5A).contains(&i) || (0x61..=0x7A).contains(&i) {
+            letters += c;
+        }
+    }
+    if letters * 100 / total > 30 {
+        Encoding::Oml
+    } else {
+        Encoding::Oms
+    }
+}
 
 /// dvips text-emitting operators. Every one of these consumes a single
 /// literal-string argument and emits characters from the current font.
@@ -71,16 +110,21 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
 
     let mut tok = Tokeniser::new(src);
 
-    // Pass 1: register font names. A dvips font definition begins with
-    // `/Foo <first> <last> df`. We accept any `/Name` followed by two
-    // numbers and then the bare word `df` as registering that font.
+    // Pass 1: register fonts and build per-font byte histograms so we
+    // can classify each font's TeX encoding before emission.
     let mut fonts: HashSet<String> = HashSet::new();
+    let mut histograms: HashMap<String, [u32; 128]> = HashMap::new();
     {
         let mut t = Tokeniser::new(src);
         let mut pending_name: Option<String> = None;
         let mut pending_nums: u8 = 0;
+        // State for tracking byte usage within bop..eop.
+        let mut p1_in_page = false;
+        let mut p1_font: Option<String> = None;
+        let mut p1_pending_str: Option<Vec<u8>> = None;
         while let Some(tk) = t.next() {
-            match tk {
+            // Font-definition tracking.
+            match &tk {
                 Token::Name(n) => {
                     pending_name = Some(n.to_string());
                     pending_nums = 0;
@@ -88,7 +132,7 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
                 Token::Number(_) if pending_name.is_some() => {
                     pending_nums += 1;
                 }
-                Token::Word("df") | Token::Word("dfs") if pending_nums >= 2 => {
+                Token::Word(w) if (*w == "df" || *w == "dfs") && pending_nums >= 2 => {
                     if let Some(name) = pending_name.take() {
                         fonts.insert(name);
                     }
@@ -100,7 +144,38 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
                 }
                 _ => {}
             }
+            // Content-histogram tracking.
+            match tk {
+                Token::Word("bop") => p1_in_page = true,
+                Token::Word("eop") => {
+                    p1_in_page = false;
+                    p1_pending_str = None;
+                }
+                _ if !p1_in_page => {}
+                Token::LitString(bytes) => p1_pending_str = Some(bytes),
+                Token::Word(w) if fonts.contains(w) => p1_font = Some(w.to_string()),
+                Token::Word(w) if is_show_op(w) => {
+                    if let (Some(bytes), Some(fname)) = (p1_pending_str.take(), p1_font.as_deref())
+                    {
+                        let hist = histograms
+                            .entry(fname.to_string())
+                            .or_insert_with(|| [0u32; 128]);
+                        for &b in &bytes {
+                            if (b as usize) < 128 {
+                                hist[b as usize] += 1;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
+    }
+
+    // Classify encoding per font.
+    let mut encodings: HashMap<String, Encoding> = HashMap::new();
+    for (name, hist) in &histograms {
+        encodings.insert(name.clone(), detect_encoding(hist));
     }
 
     // Pass 2: walk page content and collect (font, byte) emissions with
@@ -192,9 +267,14 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
                 {
                     let merge =
                         prev_kern < WORD_SPACE_KERN && last_span_can_merge(&current_line, fname);
+                    let enc = encodings
+                        .get(fname)
+                        .copied()
+                        .unwrap_or(Encoding::Ot1);
                     emit_string(
                         &bytes,
                         fname,
+                        enc,
                         last_x,
                         last_y,
                         page_num,
@@ -345,6 +425,7 @@ fn last_span_can_merge(line: &[TextSpan], font: &str) -> bool {
 fn emit_string(
     bytes: &[u8],
     font: &str,
+    encoding: Encoding,
     x: f32,
     y: f32,
     page_num: u32,
@@ -353,7 +434,7 @@ fn emit_string(
 ) {
     let mut text = String::new();
     for &b in bytes {
-        text.push_str(ot1_to_unicode(b));
+        text.push_str(decode_byte(encoding, b));
     }
     if text.is_empty() {
         return;
@@ -518,6 +599,11 @@ mod tests {
             "Primitive recursion",
             "Introduction",
             "termination",
+            // Math-font content: OMS (CMSY) and OML (CMMI) must be
+            // detected and decoded for these to appear.
+            "\u{2264}",  // ≤ (from u ≤ v style relations)
+            "\u{2200}",  // ∀ (for all)
+            "\u{1D465}", // 𝑥 math italic x
         ];
         eprint!("  substrings:");
         for s in substrings {
