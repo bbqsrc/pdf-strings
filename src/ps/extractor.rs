@@ -262,15 +262,11 @@ pub(crate) fn extract_lines(src: &[u8]) -> Result<Vec<Vec<TextSpan>>, OutputErro
                 // space between adjacent spans on a line, so a merged
                 // word renders with no internal space and a word boundary
                 // gets exactly one space.
-                if let (Some(bytes), Some(fname)) =
-                    (pending_string.take(), current_font.as_deref())
+                if let (Some(bytes), Some(fname)) = (pending_string.take(), current_font.as_deref())
                 {
                     let merge =
                         prev_kern < WORD_SPACE_KERN && last_span_can_merge(&current_line, fname);
-                    let enc = encodings
-                        .get(fname)
-                        .copied()
-                        .unwrap_or(Encoding::Ot1);
+                    let enc = encodings.get(fname).copied().unwrap_or(Encoding::Ot1);
                     emit_string(
                         &bytes,
                         fname,
@@ -577,8 +573,7 @@ mod tests {
                 counts[i] += 1;
             }
         }
-        let mut pairs: Vec<(u8, u32)> =
-            (0..26u8).map(|i| (i, counts[i as usize])).collect();
+        let mut pairs: Vec<(u8, u32)> = (0..26u8).map(|i| (i, counts[i as usize])).collect();
         pairs.sort_by(|a, b| b.1.cmp(&a.1));
         eprintln!("CADE1996.ps: {} lines, {} chars", total_lines, total_chars);
         eprint!("  top letters:");
@@ -612,7 +607,11 @@ mod tests {
         eprintln!();
 
         // Assertions: English-letter plausibility.
-        assert!(total_chars > 10_000, "expected >10k chars; got {}", total_chars);
+        assert!(
+            total_chars > 10_000,
+            "expected >10k chars; got {}",
+            total_chars
+        );
         let e_count = counts[(b'e' - b'a') as usize];
         let t_count = counts[(b't' - b'a') as usize];
         let l_count = counts[(b'l' - b'a') as usize];
@@ -624,11 +623,7 @@ mod tests {
             l_count
         );
         for s in substrings {
-            assert!(
-                all_text.contains(*s),
-                "expected '{}' in extracted text",
-                s
-            );
+            assert!(all_text.contains(*s), "expected '{}' in extracted text", s);
         }
     }
 

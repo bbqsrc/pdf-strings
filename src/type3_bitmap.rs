@@ -291,7 +291,10 @@ fn parse_inline_dict(slice: &[u8]) -> Option<(u32, u32, Filter)> {
             }
             _ => {
                 // Skip value: another name, number, bool, or nested dict.
-                if i < slice.len() && slice[i] == b'<' && i + 1 < slice.len() && slice[i + 1] == b'<'
+                if i < slice.len()
+                    && slice[i] == b'<'
+                    && i + 1 < slice.len()
+                    && slice[i + 1] == b'<'
                 {
                     i = skip_nested_dict(slice, i + 2)?;
                 }
@@ -347,23 +350,28 @@ fn decode_g4_bitmap(data: &[u8], width: u32, height: u32) -> Option<Bitmap> {
     let mut pixels = vec![0u8; row_stride * height as usize];
     let mut row_index = 0usize;
 
-    let ok = decoder::decode_g4(data.iter().copied(), width as u16, Some(height as u16), |line| {
-        if row_index >= height as usize {
-            return;
-        }
-        let row_off = row_index * row_stride;
-        let mut x = 0u32;
-        for color in decoder::pels(line, width as u16) {
-            if x >= width {
-                break;
+    let ok = decoder::decode_g4(
+        data.iter().copied(),
+        width as u16,
+        Some(height as u16),
+        |line| {
+            if row_index >= height as usize {
+                return;
             }
-            if matches!(color, Color::Black) {
-                pixels[row_off + (x / 8) as usize] |= 1 << (7 - (x % 8));
+            let row_off = row_index * row_stride;
+            let mut x = 0u32;
+            for color in decoder::pels(line, width as u16) {
+                if x >= width {
+                    break;
+                }
+                if matches!(color, Color::Black) {
+                    pixels[row_off + (x / 8) as usize] |= 1 << (7 - (x % 8));
+                }
+                x += 1;
             }
-            x += 1;
-        }
-        row_index += 1;
-    });
+            row_index += 1;
+        },
+    );
     if ok.is_none() {
         warn!("CCITT G4 decode failed for {}x{} glyph", width, height);
         return None;

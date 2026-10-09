@@ -261,11 +261,8 @@ fn build_reference() -> Vec<ReferenceEntry> {
                     if metrics.width == 0 || metrics.height == 0 {
                         continue;
                     }
-                    let bm = gray_to_bitmap(
-                        &bitmap_gray,
-                        metrics.width as u32,
-                        metrics.height as u32,
-                    );
+                    let bm =
+                        gray_to_bitmap(&bitmap_gray, metrics.width as u32, metrics.height as u32);
                     let Some((sig, aspect, size_bucket)) = signature(&bm) else {
                         continue;
                     };
@@ -338,10 +335,7 @@ pub(crate) fn best_match_in_fonts(bm: &Bitmap, allowed: &[u8]) -> Option<MatchRe
     best_match_impl(bm, |e| allowed.contains(&e.font_idx))
 }
 
-fn best_match_impl(
-    bm: &Bitmap,
-    filter: impl Fn(&ReferenceEntry) -> bool,
-) -> Option<MatchResult> {
+fn best_match_impl(bm: &Bitmap, filter: impl Fn(&ReferenceEntry) -> bool) -> Option<MatchResult> {
     let reference = REFERENCE.get_or_init(build_reference);
     let (target_sig, target_aspect, target_size) = signature(bm)?;
 

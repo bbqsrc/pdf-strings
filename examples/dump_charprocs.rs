@@ -2,7 +2,9 @@ use lopdf::{Document, Object};
 use std::env;
 
 fn main() {
-    let file = env::args().nth(1).expect("Usage: dump_charprocs <pdf_file> [glyph]");
+    let file = env::args()
+        .nth(1)
+        .expect("Usage: dump_charprocs <pdf_file> [glyph]");
     let glyph_filter = env::args().nth(2);
 
     let doc = Document::load(&file).expect("Failed to load PDF");

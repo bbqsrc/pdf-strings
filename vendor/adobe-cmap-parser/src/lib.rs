@@ -1,9 +1,9 @@
 extern crate pom;
 
-use pom::char_class::{alpha, hex_digit, oct_digit, multispace};
-use pom::Parser;
+use pom::char_class::{alpha, hex_digit, multispace, oct_digit};
 use pom::parser::*;
 use pom::DataInput;
+use pom::Parser;
 use std::collections::HashMap;
 
 use std::str::FromStr;
@@ -22,7 +22,9 @@ pub enum Value {
 
 fn hex_char() -> Parser<u8, u8> {
     let number = is_a(hex_digit).repeat(2);
-    number.collect().convert(|v|u8::from_str_radix(&String::from_utf8(v).unwrap(), 16))
+    number
+        .collect()
+        .convert(|v| u8::from_str_radix(&String::from_utf8(v).unwrap(), 16))
 }
 
 fn comment() -> Parser<u8, ()> {
@@ -34,17 +36,21 @@ fn content_space() -> Parser<u8, ()> {
 }
 
 fn operator() -> Parser<u8, String> {
-    (is_a(alpha) | one_of(b"*'\"")).repeat(1..).convert(|v|String::from_utf8(v))
+    (is_a(alpha) | one_of(b"*'\""))
+        .repeat(1..)
+        .convert(|v| String::from_utf8(v))
 }
 
 fn oct_char() -> Parser<u8, u8> {
     let number = is_a(oct_digit).repeat(1..4);
-    number.collect().convert(|v|u8::from_str_radix(&String::from_utf8(v).unwrap(), 8))
+    number
+        .collect()
+        .convert(|v| u8::from_str_radix(&String::from_utf8(v).unwrap(), 8))
 }
 
 fn escape_sequence() -> Parser<u8, Vec<u8>> {
-    sym(b'\\') *
-        ( sym(b'\\').map(|_| vec![b'\\'])
+    sym(b'\\')
+        * (sym(b'\\').map(|_| vec![b'\\'])
             | sym(b'(').map(|_| vec![b'('])
             | sym(b')').map(|_| vec![b')'])
             | sym(b'n').map(|_| vec![b'\n'])
@@ -53,35 +59,32 @@ fn escape_sequence() -> Parser<u8, Vec<u8>> {
             | sym(b'b').map(|_| vec![b'\x08'])
             | sym(b'f').map(|_| vec![b'\x0C'])
             | oct_char().map(|c| vec![c])
-            | eol()     .map(|_| vec![])
-            | empty()   .map(|_| vec![])
-        )
+            | eol().map(|_| vec![])
+            | empty().map(|_| vec![]))
 }
 
 fn nested_literal_string() -> Parser<u8, Vec<u8>> {
-    sym(b'(') *
-        ( none_of(b"\\()").repeat(1..)
-            | escape_sequence()
-            | call(nested_literal_string)
-        ).repeat(0..).map(|segments| {
-            let mut bytes = segments.into_iter().fold(
-                vec![b'('],
-                |mut bytes, mut segment| {
-                    bytes.append(&mut segment);
-                    bytes
-                });
-            bytes.push(b')');
-            bytes
-        })
+    sym(b'(')
+        * (none_of(b"\\()").repeat(1..) | escape_sequence() | call(nested_literal_string))
+            .repeat(0..)
+            .map(|segments| {
+                let mut bytes = segments
+                    .into_iter()
+                    .fold(vec![b'('], |mut bytes, mut segment| {
+                        bytes.append(&mut segment);
+                        bytes
+                    });
+                bytes.push(b')');
+                bytes
+            })
         - sym(b')')
 }
 
 fn literal_string() -> Parser<u8, Vec<u8>> {
-    sym(b'(') *
-        ( none_of(b"\\()").repeat(1..)
-            | escape_sequence()
-            | nested_literal_string()
-        ).repeat(0..).map(|segments|segments.concat())
+    sym(b'(')
+        * (none_of(b"\\()").repeat(1..) | escape_sequence() | nested_literal_string())
+            .repeat(0..)
+            .map(|segments| segments.concat())
         - sym(b')')
 }
 
@@ -91,31 +94,39 @@ fn name() -> Parser<u8, Vec<u8>> {
 
 fn integer() -> Parser<u8, i64> {
     let number = one_of(b"+-").opt() + one_of(b"0123456789").repeat(1..);
-    number.collect().convert(|v|String::from_utf8(v)).convert(|s|i64::from_str(&s))
+    number
+        .collect()
+        .convert(|v| String::from_utf8(v))
+        .convert(|s| i64::from_str(&s))
 }
 
 fn number() -> Parser<u8, String> {
-    let number = one_of(b"+-").opt() +
-        ( (one_of(b"0123456789") - one_of(b"0123456789").repeat(0..).discard())
+    let number = one_of(b"+-").opt()
+        + ((one_of(b"0123456789") - one_of(b"0123456789").repeat(0..).discard())
             | (one_of(b"0123456789").repeat(1..) * sym(b'.') - one_of(b"0123456789").repeat(0..))
-            | sym(b'.') - one_of(b"0123456789").repeat(1..)
-        );
-    number.collect().convert(|v|String::from_utf8(v))
+            | sym(b'.') - one_of(b"0123456789").repeat(1..));
+    number.collect().convert(|v| String::from_utf8(v))
 }
 
 fn space() -> Parser<u8, ()> {
-    ( one_of(b" \t\n\r\0\x0C").repeat(1..).discard()
-    ).repeat(0..).discard()
+    (one_of(b" \t\n\r\0\x0C").repeat(1..).discard())
+        .repeat(0..)
+        .discard()
 }
 
 // Dictionaries are not mentioned in the CMap spec but are produced by software like Cairo and Skia and supported other by readers
 fn dictionary() -> Parser<u8, HashMap<String, Value>> {
     let entry = name() - space() + call(value);
     let entries = seq(b"<<") * space() * entry.repeat(0..) - seq(b">>");
-    entries.map(|entries| entries.into_iter().fold(
-        HashMap::new(),
-        |mut dict: HashMap<String, Value>, (key, value)| { dict.insert(String::from_utf8(key).unwrap(), value); dict }
-    ))
+    entries.map(|entries| {
+        entries.into_iter().fold(
+            HashMap::new(),
+            |mut dict: HashMap<String, Value>, (key, value)| {
+                dict.insert(String::from_utf8(key).unwrap(), value);
+                dict
+            },
+        )
+    })
 }
 
 fn hexadecimal_string() -> Parser<u8, Vec<u8>> {
@@ -127,29 +138,25 @@ fn eol() -> Parser<u8, u8> {
 }
 
 fn value() -> Parser<u8, Value> {
-    ( seq(b"true").map(|_| Value::Boolean(true))
-    | seq(b"false").map(|_| Value::Boolean(false))
-    | integer().map(|v| Value::Integer(v))
-    | number().map(|v| Value::Number(v))
-    | name().map(|v| Value::Name(v))
-    | operator().map(|v| Value::Operator(v))
-    | literal_string().map(|v| Value::LiteralString(v))
-    | dictionary().map(|v| Value::Dictionary(v))
-    | hexadecimal_string().map(|v| Value::LiteralString(v))
-    | array().map(|v| Value::Array(v))
-    ) - content_space()
+    (seq(b"true").map(|_| Value::Boolean(true))
+        | seq(b"false").map(|_| Value::Boolean(false))
+        | integer().map(|v| Value::Integer(v))
+        | number().map(|v| Value::Number(v))
+        | name().map(|v| Value::Name(v))
+        | operator().map(|v| Value::Operator(v))
+        | literal_string().map(|v| Value::LiteralString(v))
+        | dictionary().map(|v| Value::Dictionary(v))
+        | hexadecimal_string().map(|v| Value::LiteralString(v))
+        | array().map(|v| Value::Array(v)))
+        - content_space()
 }
-
-
 
 fn array() -> Parser<u8, Vec<Value>> {
     sym(b'[') * space() * call(value).repeat(0..) - sym(b']')
 }
 
-
-fn file() -> Parser<u8,Vec<Value>>
-{
-    ( comment().repeat(0..) * content_space() * value()).repeat(1..)
+fn file() -> Parser<u8, Vec<Value>> {
+    (comment().repeat(0..) * content_space() * value()).repeat(1..)
 }
 
 pub fn parse(input: &[u8]) -> Result<Vec<Value>, pom::Error> {
@@ -175,11 +182,23 @@ pub fn get_unicode_map(input: &[u8]) -> Result<HashMap<u32, Vec<u8>>, &'static s
             Value::Operator(ref o) => {
                 match o.as_ref() {
                     "beginbfchar" => {
-                        let count = if let &Value::Integer(ref c) = &lexed[i-1] { Ok(*c) } else { Err("beginbfchar exected int") }?;
+                        let count = if let &Value::Integer(ref c) = &lexed[i - 1] {
+                            Ok(*c)
+                        } else {
+                            Err("beginbfchar exected int")
+                        }?;
                         i += 1;
                         for _ in 0..count {
-                            let char_code = if let &Value::LiteralString(ref s) = &lexed[i] { Ok(s) } else { Err("beginbfchar exected hexstring") }?;
-                            let uni_code = if let &Value::LiteralString(ref s) = &lexed[i+1] { Ok(s) } else { Err("beginbfchar exected hexstring") }?;
+                            let char_code = if let &Value::LiteralString(ref s) = &lexed[i] {
+                                Ok(s)
+                            } else {
+                                Err("beginbfchar exected hexstring")
+                            }?;
+                            let uni_code = if let &Value::LiteralString(ref s) = &lexed[i + 1] {
+                                Ok(s)
+                            } else {
+                                Err("beginbfchar exected hexstring")
+                            }?;
                             //let char_code =
                             map.insert(as_code(char_code), uni_code.clone());
                             i += 2;
@@ -187,12 +206,24 @@ pub fn get_unicode_map(input: &[u8]) -> Result<HashMap<u32, Vec<u8>>, &'static s
                         i += 1;
                     }
                     "beginbfrange" => {
-                        let count = if let &Value::Integer(ref c) = &lexed[i-1] { Ok(*c) } else { Err("beginbfrange exected int") }?;
+                        let count = if let &Value::Integer(ref c) = &lexed[i - 1] {
+                            Ok(*c)
+                        } else {
+                            Err("beginbfrange exected int")
+                        }?;
                         i += 1;
                         for _ in 0..count {
-                            let lower_code = if let &Value::LiteralString(ref s) = &lexed[i] { Ok(as_code(s)) } else { Err("beginbfrange exected hexstring") }?;
-                            let upper_code = if let &Value::LiteralString(ref s) = &lexed[i+1] { Ok(as_code(s)) } else { Err("beginbfrange exected hexstring") }?;
-                            match &lexed[i+2] {
+                            let lower_code = if let &Value::LiteralString(ref s) = &lexed[i] {
+                                Ok(as_code(s))
+                            } else {
+                                Err("beginbfrange exected hexstring")
+                            }?;
+                            let upper_code = if let &Value::LiteralString(ref s) = &lexed[i + 1] {
+                                Ok(as_code(s))
+                            } else {
+                                Err("beginbfrange exected hexstring")
+                            }?;
+                            match &lexed[i + 2] {
                                 &Value::LiteralString(ref start) => {
                                     match start.len() {
                                         4 => {
@@ -227,8 +258,8 @@ pub fn get_unicode_map(input: &[u8]) -> Result<HashMap<u32, Vec<u8>>, &'static s
                                             let last_val = ((start[n - 2] as u16) << 8)
                                                 | (start[n - 1] as u16);
                                             for c in lower_code..=upper_code {
-                                                let code = last_val
-                                                    .wrapping_add((c - lower_code) as u16);
+                                                let code =
+                                                    last_val.wrapping_add((c - lower_code) as u16);
                                                 let mut out = Vec::with_capacity(n);
                                                 out.extend_from_slice(prefix);
                                                 out.extend_from_slice(&code.to_be_bytes());
@@ -247,25 +278,34 @@ pub fn get_unicode_map(input: &[u8]) -> Result<HashMap<u32, Vec<u8>>, &'static s
                                         return Err("bad length of array");
                                     }
                                     for c in lower_code..=upper_code {
-                                        map.insert(c, if let &Value::LiteralString(ref s) = &codes[i] { Ok(s.clone()) } else { Err("beginbfrange exected hexstring") }?);
+                                        map.insert(
+                                            c,
+                                            if let &Value::LiteralString(ref s) = &codes[i] {
+                                                Ok(s.clone())
+                                            } else {
+                                                Err("beginbfrange exected hexstring")
+                                            }?,
+                                        );
                                         i += 1;
                                     }
                                 }
-                                _ => { return Err("beginbfrange exected array or literal") }
+                                _ => return Err("beginbfrange exected array or literal"),
                             }
                             i += 3;
                         }
                         i += 1;
                     }
-                    _ => { i += 1; }
+                    _ => {
+                        i += 1;
+                    }
                 }
-
             }
-            _ => { i += 1; }
+            _ => {
+                i += 1;
+            }
         }
     }
     Ok(map)
-
 }
 
 fn as_code_range(start_chars: &Vec<u8>, end_chars: &Vec<u8>) -> CodeRange {
@@ -305,45 +345,79 @@ pub fn get_byte_mapping(input: &[u8]) -> Result<ByteMapping, &'static str> {
     let lexed = parse(&input).expect("failed to parse");
 
     let mut i = 0;
-    let mut result = ByteMapping { codespace: Vec::new(), cid: Vec::new() };
+    let mut result = ByteMapping {
+        codespace: Vec::new(),
+        cid: Vec::new(),
+    };
     while i < lexed.len() {
         match lexed[i] {
-            Value::Operator(ref o) => {
-                match o.as_ref() {
-                    "begincodespacerange" => {
-                        let count = if let &Value::Integer(ref c) = &lexed[i-1] { Ok(*c) } else { Err("begincodespacerange exected int") }?;
-                        i += 1;
-                        for _ in 0..count {
-                            let start = if let &Value::LiteralString(ref s) = &lexed[i] { Ok(s) } else { Err("begincodespacerange exected hexstring") }?;
-                            let end = if let &Value::LiteralString(ref s) = &lexed[i+1] { Ok(s) } else { Err("begincodespacerange exected hexstring") }?;
-                            result.codespace.push(as_code_range(start, end));
-                            i += 2;
-                        }
-                        i += 1;
+            Value::Operator(ref o) => match o.as_ref() {
+                "begincodespacerange" => {
+                    let count = if let &Value::Integer(ref c) = &lexed[i - 1] {
+                        Ok(*c)
+                    } else {
+                        Err("begincodespacerange exected int")
+                    }?;
+                    i += 1;
+                    for _ in 0..count {
+                        let start = if let &Value::LiteralString(ref s) = &lexed[i] {
+                            Ok(s)
+                        } else {
+                            Err("begincodespacerange exected hexstring")
+                        }?;
+                        let end = if let &Value::LiteralString(ref s) = &lexed[i + 1] {
+                            Ok(s)
+                        } else {
+                            Err("begincodespacerange exected hexstring")
+                        }?;
+                        result.codespace.push(as_code_range(start, end));
+                        i += 2;
                     }
-                    "begincidrange" => {
-                        let count = if let &Value::Integer(ref c) = &lexed[i-1] { Ok(*c) } else { Err("begincidrange exected int") }?;
-                        i += 1;
-                        for _ in 0..count {
-                            let start = if let &Value::LiteralString(ref s) = &lexed[i] { Ok(s) } else { Err("begincidrange exected hexstring") }?;
-                            let end = if let &Value::LiteralString(ref s) = &lexed[i+1] { Ok(s) } else { Err("begincidrange exected hexstring") }?;
-                            let offset = if let &Value::Integer(ref s) = &lexed[i+2] { Ok(s) } else { Err("begincidrange exected int") }?;
-                            result.cid.push(CIDRange { src_code_lo: as_code(start), src_code_hi: as_code(end), dst_CID_lo: *offset as u32 });
-                            i += 2;
-                        }
-                        i += 1;
-                    }
-                    _ => { i += 1; }
+                    i += 1;
                 }
-
+                "begincidrange" => {
+                    let count = if let &Value::Integer(ref c) = &lexed[i - 1] {
+                        Ok(*c)
+                    } else {
+                        Err("begincidrange exected int")
+                    }?;
+                    i += 1;
+                    for _ in 0..count {
+                        let start = if let &Value::LiteralString(ref s) = &lexed[i] {
+                            Ok(s)
+                        } else {
+                            Err("begincidrange exected hexstring")
+                        }?;
+                        let end = if let &Value::LiteralString(ref s) = &lexed[i + 1] {
+                            Ok(s)
+                        } else {
+                            Err("begincidrange exected hexstring")
+                        }?;
+                        let offset = if let &Value::Integer(ref s) = &lexed[i + 2] {
+                            Ok(s)
+                        } else {
+                            Err("begincidrange exected int")
+                        }?;
+                        result.cid.push(CIDRange {
+                            src_code_lo: as_code(start),
+                            src_code_hi: as_code(end),
+                            dst_CID_lo: *offset as u32,
+                        });
+                        i += 2;
+                    }
+                    i += 1;
+                }
+                _ => {
+                    i += 1;
+                }
+            },
+            _ => {
+                i += 1;
             }
-            _ => { i += 1; }
         }
     }
     Ok(result)
-
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -354,7 +428,7 @@ mod tests {
 
     fn do_parse(input: &[u8]) {
         let result = parse(input);
-        if let Ok(lines) = result  {
+        if let Ok(lines) = result {
             for l in lines {
                 println!("{:?}", l)
             }
@@ -371,6 +445,5 @@ mod tests {
 
         //for line in f.lines() {
         do_parse(&contents);
-
     }
 }

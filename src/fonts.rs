@@ -643,9 +643,7 @@ impl<'a> PdfType3Font<'a> {
             let mut matched = 0usize;
             if !allowed.is_empty() {
                 for (code, bm) in &bitmaps {
-                    if let Some(s) =
-                        crate::type3_matcher::match_bitmap_in_fonts(bm, &allowed)
-                    {
+                    if let Some(s) = crate::type3_matcher::match_bitmap_in_fonts(bm, &allowed) {
                         recovered_unicode.insert(*code, s);
                         matched += 1;
                     }
@@ -697,9 +695,7 @@ impl<'a> PdfType3Font<'a> {
 /// These names carry no semantic meaning — they are assigned per unique glyph
 /// shape in document order by dvips/ghostscript when generating a Type3 font.
 fn is_dvips_synthetic_name(name: &str) -> bool {
-    name.len() >= 2
-        && name.as_bytes()[0] == b'a'
-        && name[1..].bytes().all(|b| b.is_ascii_digit())
+    name.len() >= 2 && name.as_bytes()[0] == b'a' && name[1..].bytes().all(|b| b.is_ascii_digit())
 }
 
 impl<'a> PdfFont for PdfType3Font<'a> {

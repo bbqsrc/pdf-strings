@@ -23,7 +23,7 @@ debug = true
 adobe-cmap-parser = { path = "vendor/adobe-cmap-parser" }
 encoding_rs = "0.8.35"
 euclid = "0.22.14"
-lopdf = {version = "0.38", default-features = false}
+lopdf = { path = "vendor/lopdf", default-features = false }
 type1-encoding-parser = "0.1.1"
 unicode-normalization = "0.1.25"
 cff-parser = "0.1.0"
@@ -31,6 +31,40 @@ ttf-parser = "0.25"
 tracing = "0.1.44"
 fax = "0.2.6"
 fontdue = "0.9.3"
+sha2 = "0.10"
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rayon = "1"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "NSArray",
+    "NSData",
+    "NSDictionary",
+    "NSError",
+    "NSObject",
+    "NSString",
+    "NSValue",
+] }
+objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }
+objc2-core-graphics = { version = "0.3", features = [
+    "CGBitmapContext",
+    "CGColorSpace",
+    "CGContext",
+    "CGImage",
+] }
+objc2-pdf-kit = { version = "0.3", features = [
+    "PDFDocument",
+    "PDFPage",
+    "objc2-app-kit",
+] }
+objc2-vision = { version = "0.3", features = [
+    "VNDetectDocumentSegmentationRequest",
+    "VNObservation",
+    "VNRecognizeTextRequest",
+    "VNRequest",
+    "VNRequestHandler",
+    "VNTypes",
+] }
